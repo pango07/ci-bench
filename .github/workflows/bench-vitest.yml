@@ -126,6 +126,24 @@ jobs:
           sudo env PATH="$PATH" npm i -g -s "$pm"
           node --version; pnpm --version
           pnpm install --frozen-lockfile
+      # End to end through the product (bench mode, QUOD_ACTION_REF=<sha of
+      # pango07/quod-action> in extra_env): the action as a customer's job
+      # runs it (cloud off: the ledger stays in the job, as the Actions cache
+      # would carry it between jobs); bench.sh's Quod run is then the
+      # project's plain vitest command, through the action's node shim.
+      - name: pango07/quod-action at ${{ env.QUOD_ACTION_REF }}
+        if: env.QUOD_ACTION_REF != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: pango07/quod-action
+          ref: ${{ env.QUOD_ACTION_REF }}
+          path: .quod-action
+      - name: the action (one line)
+        if: env.QUOD_ACTION_REF != ''
+        uses: ./.quod-action
+        with:
+          version: ${{ env.BIN_TAG }}
+          cloud: 'false'
       - name: summary header
         run: |
           {

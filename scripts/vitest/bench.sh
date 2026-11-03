@@ -26,14 +26,24 @@ echo "window: ${#commits[@]} commits (first is the warm-up), ${commits[1]:0:9}..
 ms() { awk '{ printf "%d\n", $1 * 1000 }' /proc/uptime; }
 lock=$(sha1sum pnpm-lock.yaml 2>/dev/null | cut -c1-40)
 
+# Through the action (QUOD_ACTION_REF): plain is QUOD_DISABLE=1 (the
+# action's shim is on PATH), Quod is the plain command itself, and the
+# ledger is the one the action's hook keeps (newest under its directory).
+via_action() { [ -n "${QUOD_ACTION_REF:-}" ]; }
 plain() { # $1 = tag
   local s; s=$(ms)
-  node_modules/.bin/vitest "${args[@]}" --reporter=default --reporter=json --outputFile.json="$out/plain.json" >"$out/logs/plain-$1.log" 2>&1
+  QUOD_DISABLE=1 node_modules/.bin/vitest "${args[@]}" --reporter=default --reporter=json --outputFile.json="$out/plain.json" >"$out/logs/plain-$1.log" 2>&1
   local rc=$?
   echo "$(( $(ms) - s )) $rc"
 }
 quod() {
   local s; s=$(ms)
+  if via_action; then
+    node_modules/.bin/vitest "${args[@]}" --reporter=default --reporter=json --outputFile.json="$out/quod.json" >"$out/logs/quod-$1.log" 2>&1
+    local rc=$?
+    echo "$(( $(ms) - s )) $rc"
+    return
+  fi
   "$QUOD" vitest --dir "$state" --summary "$out/summary.json" -- "${args[@]}" --reporter=default --reporter=json --outputFile.json="$out/quod.json" >"$out/logs/quod-$1.log" 2>&1
   local rc=$?
   echo "$(( $(ms) - s )) $rc"
@@ -82,7 +92,14 @@ for i in "${!commits[@]}"; do
   else
     read -r q_ms q_rc < <(quod "$i"); read -r p_ms p_rc < <(plain "$i")
   fi
-  if (( i == 0 )) && [ "${OBSERVE:-1}" = 1 ]; then
+  if via_action; then
+    state=$(ls -td "$RUNNER_TEMP"/quod/vitest/*/ 2>/dev/null | head -1); state=${state%/}
+    node -e '
+      const fs = require("fs"); let o = {}; try { o = JSON.parse(fs.readFileSync(process.argv[1], "utf8")) } catch {}
+      fs.writeFileSync(process.argv[2], JSON.stringify({ ran: (o.ran ?? []).length, replayed: (o.replayed ?? []).length, fast: o.fast ?? false, audited: 0, audit_mismatches: o.auditMismatch ?? [] }))
+    ' "$state/out.json" "$out/summary.json"
+  fi
+  if (( i == 0 )) && [ "${OBSERVE:-1}" = 1 ] && ! via_action; then
     # The observer backstop, on the record run's commit (not timed).
     echo "::group::observer backstop"
     bash "$here/observe.sh" "$proj" "$state" "${args[@]}" 2>&1 | tee "$out/logs/observe.log" | tail -60
