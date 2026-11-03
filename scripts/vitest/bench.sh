@@ -39,6 +39,19 @@ quod() {
   echo "$(( $(ms) - s )) $rc"
 }
 
+# Same-job A/B (QUOD_B=<another quod>, through the workflow's BIN_B): B
+# runs every commit too, on its own ledger, interleaved with plain and A,
+# and its report is compared with plain's the same way (b_* fields; the
+# CI metrics get a B line). Mutation checks are A's only.
+stateb=/work/state/quod-vitest-b
+rm -rf "$stateb"
+quodb() {
+  local s; s=$(ms)
+  "$QUOD_B" vitest --dir "$stateb" --summary "$out/summary-b.json" -- "${args[@]}" --reporter=default --reporter=json --outputFile.json="$out/quod-b.json" >"$out/logs/quodb-$1.log" 2>&1
+  local rc=$?
+  echo "$(( $(ms) - s )) $rc"
+}
+
 for i in "${!commits[@]}"; do
   c=${commits[$i]}
   git checkout -q --force "$c"
@@ -56,7 +69,15 @@ for i in "${!commits[@]}"; do
     install_ms=$(( $(ms) - s ))
     lock=$nl
   fi
-  if (( i % 2 == 0 )); then
+  b_ms=; b_rc=; bcmp='{}'
+  if [ -n "${QUOD_B:-}" ]; then
+    rm -f "$out/summary-b.json"
+    case $(( i % 3 )) in
+      0) read -r p_ms p_rc < <(plain "$i"); read -r q_ms q_rc < <(quod "$i"); read -r b_ms b_rc < <(quodb "$i") ;;
+      1) read -r q_ms q_rc < <(quod "$i"); read -r b_ms b_rc < <(quodb "$i"); read -r p_ms p_rc < <(plain "$i") ;;
+      2) read -r b_ms b_rc < <(quodb "$i"); read -r p_ms p_rc < <(plain "$i"); read -r q_ms q_rc < <(quod "$i") ;;
+    esac
+  elif (( i % 2 == 0 )); then
     read -r p_ms p_rc < <(plain "$i"); read -r q_ms q_rc < <(quod "$i")
   else
     read -r q_ms q_rc < <(quod "$i"); read -r p_ms p_rc < <(plain "$i")
@@ -67,16 +88,26 @@ for i in "${!commits[@]}"; do
     bash "$here/observe.sh" "$proj" "$state" "${args[@]}" 2>&1 | tee "$out/logs/observe.log" | tail -60
     echo "::endgroup::"
     cd "$proj"
+    # B absorbs the same observation
+    [ -n "${QUOD_B:-}" ] && "$QUOD_B" vitest --dir "$stateb" --absorb /work/state/quod-observer/manifest.json 2>&1 | tail -3
   fi
+  [ -n "${QUOD_B:-}" ] && bcmp=$(node "$here/compare.mjs" "$out/plain.json" "$out/quod-b.json" "$stateb/out.json" 2>&1 | tee "$out/logs/compare-b-$i.log" | tail -1)
   cmp=$(node "$here/compare.mjs" "$out/plain.json" "$out/quod.json" "$state/out.json" 2>&1 | tee "$out/logs/compare-$i.log" | tail -1)
   files=$(git diff --name-only "$c^" "$c" 2>/dev/null)
   touched=$(echo "$files" | grep -c . || true)
   areas=$(echo "$files" | awk -F/ 'NF{ if ($1=="packages"||$1=="packages-private") print $1"/"$2; else if (NF>1) print $1"/"; else print $1 }' | sort | uniq -c | sort -rn | awk '{printf "%s%s(%s)", sep, $2, $1; sep=", "}')
   subject=$(git log -1 --format=%s "$c")
   node -e '
-    const [i, c, subject, touched, areas, p_ms, p_rc, q_ms, q_rc, install_ms, cmp, sumPath] = process.argv.slice(1)
+    const [i, c, subject, touched, areas, p_ms, p_rc, q_ms, q_rc, install_ms, cmp, sumPath, b_ms, b_rc, bcmp, bSumPath] = process.argv.slice(1)
     let s = {}; try { s = JSON.parse(require("fs").readFileSync(sumPath, "utf8")) } catch {}
     let k = {}; try { k = JSON.parse(cmp) } catch { k = { error: cmp } }
+    let b = null
+    if (b_ms) {
+      let bs = {}; try { bs = JSON.parse(require("fs").readFileSync(bSumPath, "utf8")) } catch {}
+      let bk = {}; try { bk = JSON.parse(bcmp) } catch { bk = { error: bcmp } }
+      b = { b_ms: +b_ms, b_exit: +b_rc, b_ran: bs.ran, b_replayed: bs.replayed, b_select_ms: bs.select_ms, b_record_ms: bs.record_ms, b_fast: bs.fast ?? false,
+        b_provisional: bs.provisional, b_promoted: bs.promoted, b_disagreed: bs.witness_disagreed, b_wrong: bk.wrong ?? null, b_recording: bk.recording ?? null, b_compare_error: bk.error }
+    }
     console.log(JSON.stringify({ i: +i, warmup: i === "0", commit: c, subject, touched: +touched, areas,
       plain_ms: +p_ms, plain_exit: +p_rc, quod_ms: +q_ms, quod_exit: +q_rc, install_ms: +install_ms,
       ran: s.ran, replayed: s.replayed, audited: s.audited, audit_mismatches: s.audit_mismatches,
@@ -84,8 +115,8 @@ for i in "${!commits[@]}"; do
       select_ms: s.select_ms, record_ms: s.record_ms, vitest_ms: s.vitest_ms, driver: s.driver,
       narrowed: s.narrowed, narrow: s.narrow, shared_changed_keys: s.shared_changed_keys,
       provisional: s.provisional, promoted: s.promoted, disagreed: s.witness_disagreed,
-      files: k.files, wrong: k.wrong ?? null, recording: k.recording ?? null, compare_error: k.error }))
-  ' "$i" "$c" "$subject" "$touched" "$areas" "$p_ms" "$p_rc" "$q_ms" "$q_rc" "$install_ms" "$cmp" "$out/summary.json" | tee -a "$out/results.jsonl"
+      files: k.files, wrong: k.wrong ?? null, recording: k.recording ?? null, compare_error: k.error, ...b }))
+  ' "$i" "$c" "$subject" "$touched" "$areas" "$p_ms" "$p_rc" "$q_ms" "$q_rc" "$install_ms" "$cmp" "$out/summary.json" "$b_ms" "$b_rc" "$bcmp" "$out/summary-b.json" | tee -a "$out/results.jsonl"
 
   # Mutation check (not timed): on some commits, a throw put into a
   # function some recorded test executed must make Quod run that test and
@@ -123,7 +154,7 @@ cat "$out/report.md"
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$out/report.md" >> "$GITHUB_STEP_SUMMARY"
 # Loud: a wrong replay, or a recorded run that differs from plain (the
 # recording changed behaviour), fails the job; the warm-up counts too.
-if node -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n").map(JSON.parse);process.exit(l.some(r=>r.wrong===null||r.wrong.length||r.recording===null||r.recording?.length)?1:0)' "$out/results.jsonl"; then
+if node -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n").map(JSON.parse);process.exit(l.some(r=>r.wrong===null||r.wrong.length||r.recording===null||r.recording?.length||("b_ms" in r&&(r.b_wrong===null||r.b_wrong.length||r.b_recording===null||r.b_recording?.length)))?1:0)' "$out/results.jsonl"; then
   echo "0 wrong replays, 0 recording differences"
 else
   echo "::error::WRONG REPLAYS or RECORDING CHANGED BEHAVIOUR (or an uncompared commit): see report.md"; exit 1

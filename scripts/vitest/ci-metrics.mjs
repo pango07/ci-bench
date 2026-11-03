@@ -61,6 +61,11 @@ for (const r of lines) {
     ci_cost_x: +(m.quod.cost / Math.max(m.plain.cost, 10)).toFixed(3),
     ci_jobs: m.jobs,
   })
+  // Same-job A/B (bench.sh with QUOD_B): B is an inline check job too.
+  if (r.b_ms != null) {
+    const install = r.install_ms ?? 0
+    Object.assign(r, { ci_fast_b_ms: install + r.b_ms, ci_cost_b_ms: J + install + r.b_ms })
+  }
   rows.push(r)
 }
 fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
@@ -94,6 +99,15 @@ totals.cost_x_measured_only = +(
   sum(timed.map((r) => r.ci_cost_quod_ms - jobs(r) * J)) / Math.max(sum(timed.map((r) => r.ci_cost_plain_ms - J)), 1)
 ).toFixed(3)
 const shadowLine = timed.some((r) => r.ci_jobs.shadow_job_ms != null)
+const ab = timed.length > 0 && timed.every((r) => r.ci_fast_b_ms != null)
+if (ab) {
+  Object.assign(totals, { fast_b_ms: tot('ci_fast_b_ms'), cost_b_ms: tot('ci_cost_b_ms') })
+  totals.fast_b_x = +(totals.fast_b_ms / Math.max(totals.fast_plain_ms, 1)).toFixed(3)
+  totals.cost_b_x = +(totals.cost_b_ms / Math.max(totals.cost_plain_ms, 1)).toFixed(3)
+  totals.fast_b_x_median = +median(timed.map((r) => r.ci_fast_b_ms / Math.max(r.ci_fast_plain_ms, 10))).toFixed(3)
+  totals.cost_b_x_median = +median(timed.map((r) => r.ci_cost_b_ms / Math.max(r.ci_cost_plain_ms, 10))).toFixed(3)
+  totals.b_wrong = sum(timed.map((r) => (r.b_wrong ?? []).length))
+}
 const metrics = {
   definition: {
     ci_fast: 'job start to developer-facing check done, critical path only: install + test step (Quod: plan, then install + check unless the plan replayed everything)',
@@ -117,6 +131,11 @@ out.push('|---|---:|---:|---:|---:|')
 out.push(`| **CI fast**, ${timed.length} commits | ${s(totals.fast_plain_ms)} s | ${s(totals.fast_quod_ms)} s | **${totals.fast_x.toFixed(2)}x** | ${totals.fast_x_median.toFixed(2)}x |`)
 out.push(`| **CI cost**, ${timed.length} commits | ${s(totals.cost_plain_ms)} s | ${s(totals.cost_quod_ms)} s | **${totals.cost_x.toFixed(2)}x** | ${totals.cost_x_median.toFixed(2)}x |`)
 out.push(`| CI cost, measured parts only (no fixed overhead) | | | ${totals.cost_x_measured_only.toFixed(2)}x | |`)
+if (ab) {
+  out.push(`| **same job, B** (\`QUOD_B\`): CI fast | ${s(totals.fast_plain_ms)} s | ${s(totals.fast_b_ms)} s | **${totals.fast_b_x.toFixed(2)}x** | ${totals.fast_b_x_median.toFixed(2)}x |`)
+  out.push(`| **same job, B**: CI cost | ${s(totals.cost_plain_ms)} s | ${s(totals.cost_b_ms)} s | **${totals.cost_b_x.toFixed(2)}x** | ${totals.cost_b_x_median.toFixed(2)}x |`)
+  out.push(`| B / A (test step totals) | | | ${(sum(timed.map((r) => r.b_ms)) / Math.max(sum(timed.map((r) => r.quod_ms)), 1)).toFixed(3)} | B wrong replays: ${totals.b_wrong} |`)
+}
 if (first) out.push(`| first run ever (not in the totals) | fast ${s(first.ci_fast_plain_ms)} s, cost ${s(first.ci_cost_plain_ms)} s | fast ${s(first.ci_fast_quod_ms)} s, cost ${s(first.ci_cost_quod_ms)} s | | |`)
 out.push('')
 out.push(`<details><summary>per commit</summary>\n`)
