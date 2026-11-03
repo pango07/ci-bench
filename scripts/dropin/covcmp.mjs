@@ -51,7 +51,8 @@ const table = (log) => {
       continue
     }
     if (!on || /quod( vitest)?:/.test(l)) continue
-    if (l.includes('|')) out.push(l.trimEnd())
+    // a table row or rule has a column per metric; anything else ends it
+    if ((l.match(/\|/g) ?? []).length >= 4) out.push(l.trimEnd())
     else if (l.trim() && !/^[-\s]+$/.test(l)) on = false
   }
   return out.length ? out.join('\n') : null
