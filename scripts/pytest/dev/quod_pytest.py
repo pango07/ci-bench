@@ -405,6 +405,18 @@ def _caller():
     return ""
 
 
+_PYTEST_PROBES = {
+    "pytest.ini",
+    ".pytest.ini",
+    "pytest.toml",
+    ".pytest.toml",
+    "pyproject.toml",
+    "tox.ini",
+    "setup.cfg",
+    "conftest.py",
+    "__init__.py",
+}
+
 _LOCALHOST = ("127.0.0.1", "localhost", "::1", "0.0.0.0", "")
 
 
@@ -558,7 +570,7 @@ class Recorder:
         return os.path.normpath(p)
 
     def _excluded(self, p):
-        if "/__pycache__/" in p or p.endswith(".pyc"):
+        if "/__pycache__" in p or p.endswith(".pyc"):
             return True
         return (p + os.sep).startswith(self.excl) or p.startswith(self.excl)
 
@@ -671,7 +683,13 @@ class Recorder:
                                 if ok is not None:
                                     rec.cur.reads[ok] = None
                                 elif not rec._excluded(p) and p not in rec.written:
-                                    rec.cur.reads["e:" + p] = None
+                                    mod = _caller()
+                                    if (mod.startswith("_pytest") or mod.startswith("pluggy")) and os.path.basename(p) not in _PYTEST_PROBES:
+                                        # pytest finding test files and its
+                                        # outputs; it finds new ones itself.
+                                        pass
+                                    else:
+                                        rec.cur.reads["e:" + p] = None
                         except Exception:
                             pass
                         finally:
@@ -775,6 +793,11 @@ class Recorder:
                 w = rec.loads[name] = Window("l", name)
             rec.push(w)
             try:
+                origin = spec.origin if getattr(spec, "has_location", False) else None
+                if isinstance(origin, str) and rec.on:
+                    p = os.path.normpath(os.path.abspath(origin))
+                    if not rec._excluded(p):
+                        w.reads[("m:" if p.endswith(".py") else "f:") + p] = None
                 mod = orig_load(spec)
             finally:
                 rec.pop()
@@ -2088,7 +2111,7 @@ def _register(plugin):
     import pytest
 
     class Wrap:
-        @pytest.hookimpl(hookwrapper=True)
+        @pytest.hookimpl(hookwrapper=True, tryfirst=True)
         def pytest_runtest_protocol(self, item, nextitem):
             yield from plugin._run_wrapper(item, nextitem)
 
