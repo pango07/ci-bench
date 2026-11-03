@@ -22,6 +22,16 @@ on:
         description: Commits per repository (a corpus entry may cap it lower)
         required: false
         default: '12'
+      mode:
+        description: "witness (no shadow job: inline recording, QUOD_VITEST_WITNESSES=2) or shadow (the released check + shadow pair)"
+        required: false
+        default: witness
+        type: choice
+        options: [witness, shadow]
+      witness_bin:
+        description: The second-witness quod (a bin-<sha> release of this repo) for mode witness
+        required: false
+        default: bin-42050dc
 
 permissions:
   contents: read
@@ -93,7 +103,19 @@ jobs:
         with:
           cloud: 'false'
 
-      - name: drop-in bench (${{ matrix.commits }} commits)
+      - name: second-witness quod (mode witness)
+        if: inputs.mode == 'witness'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          W: ${{ inputs.witness_bin }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/qw"
+          gh release download "$W" -R "$GITHUB_REPOSITORY" -p 'quod-linux-x86_64.tar.gz' -D "$RUNNER_TEMP/qw"
+          tar -C "$RUNNER_TEMP/qw" -xzf "$RUNNER_TEMP/qw/quod-linux-x86_64.tar.gz"
+          echo "DROPIN_QUOD_W=$RUNNER_TEMP/qw/quod" >> "$GITHUB_ENV"
+      - name: drop-in bench (${{ inputs.mode }})
+        env:
+          DROPIN_MODE: ${{ inputs.mode }}
         run: bash "$RUNNER_TEMP/cibench/scripts/dropin/run.sh"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

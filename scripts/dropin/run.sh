@@ -48,13 +48,30 @@ printf '{"root":"%s","cur":"%s"}' "$proj" "$D/cur" > "$D/control.json"
 quodbin=$([ $active = 1 ] && node -p 'require(process.argv[1]).quod' "$Q/config.json")
 echo "quod: ${quodbin:-none} $([ -n "$quodbin" ] && "$quodbin" --version 2>&1 | head -1)"
 
-setmode() { # plain | check | shadow
+# DROPIN_MODE=witness (default): no shadow job. The test job records inline
+# with second-witness trust (QUOD_VITEST_WITNESSES=2, DROPIN_QUOD_W: a
+# second-witness quod): the action's hook, with its check-mode
+# `--no-record` dropped (what an inline-recording action would run), and the
+# ledger carried from each commit's job to the next. DROPIN_MODE=shadow: the
+# released check + shadow pair.
+mode=${DROPIN_MODE:-witness}
+if [ "$mode" = witness ] && [ $active = 1 ]; then
+  [ -x "${DROPIN_QUOD_W:-}" ] || { echo "::error::witness mode needs DROPIN_QUOD_W"; exit 2; }
+  sed "s/'--no-record', //" "$Q/hook.cjs" > "$Q/hook-witness.cjs"
+  grep -q -- "--no-record" "$Q/hook-witness.cjs" && { echo "::error::could not drop --no-record from hook.cjs"; exit 2; }
+  QUOD_SHIM_ACTIVE=1 "$REAL" -e 'const f=process.argv[1],c=JSON.parse(require("fs").readFileSync(f,"utf8"));c.quod=process.argv[2];require("fs").writeFileSync(f,JSON.stringify(c),{mode:0o600})' "$Q/config.json" "$DROPIN_QUOD_W"
+  export QUOD_VITEST_WITNESSES=2
+  rm -rf "$L"; mkdir -p "$L"   # no recording yet (the action may have restored one from this repo's cache)
+  echo "witness mode: $DROPIN_QUOD_W ($("$DROPIN_QUOD_W" --version 2>&1 | head -1)), QUOD_VITEST_WITNESSES=2"
+fi
+setmode() { # plain | check | shadow | witness
   local req="--require '$D/bench.cjs'"
-  [ "$1" != plain ] && [ $active = 1 ] && req="$req --require '$Q/hook.cjs'"
+  [ "$1" = check ] || [ "$1" = shadow ] && [ $active = 1 ] && req="$req --require '$Q/hook.cjs'"
+  [ "$1" = witness ] && [ $active = 1 ] && req="$req --require '$Q/hook-witness.cjs'"
   printf '#!/bin/sh\n[ "$QUOD_SHIM_ACTIVE" = 1 ] && exec %s "$@"\nexec %s %s "$@"\n' "'$REAL'" "'$REAL'" "$req" > "$Q/bin/node"
   chmod +x "$Q/bin/node"
   if [ $active = 1 ] && [ "$1" != plain ]; then
-    QUOD_SHIM_ACTIVE=1 "$REAL" -e 'const f=process.argv[1],c=JSON.parse(require("fs").readFileSync(f,"utf8"));c.mode=process.argv[2];c.cloud=null;require("fs").writeFileSync(f,JSON.stringify(c),{mode:0o600})' "$Q/config.json" "$1"
+    QUOD_SHIM_ACTIVE=1 "$REAL" -e 'const f=process.argv[1],c=JSON.parse(require("fs").readFileSync(f,"utf8"));c.mode=process.argv[2]==="shadow"?"shadow":"check";c.cloud=null;require("fs").writeFileSync(f,JSON.stringify(c),{mode:0o600})' "$Q/config.json" "$1"
   fi
   rm -rf "$D/cur"; mkdir -p "$D/cur"
 }
@@ -109,32 +126,43 @@ for i in "${!commits[@]}"; do
       echo "probe: with QUOD_DISABLE=1 in the environment, Quod still ran $n vitest command lines" | tee -a "$out/logs/probe.log"
     fi
   fi
-  if (( i % 2 == 0 )); then
-    setmode plain; read -r p_ms p_rc < <(runtest plain "$i")
-    setmode check; ledger_from $((i - 1)); rm -rf "$Q/reports"; mkdir -p "$Q/reports"
-    read -r q_ms q_rc < <(runtest check "$i")
-  else
-    setmode check; ledger_from $((i - 1)); rm -rf "$Q/reports"; mkdir -p "$Q/reports"
-    read -r q_ms q_rc < <(runtest check "$i")
-    keep=$out/runs/$i/check-out; mkdir -p "$keep"
-    for f in "$L"/*/out.json; do [ -f "$f" ] && cp "$f" "$keep/$(basename "$(dirname "$f")").json"; done
-    setmode plain; read -r p_ms p_rc < <(runtest plain "$i")
-  fi
   keep=$out/runs/$i/check-out; mkdir -p "$keep"
-  if (( i % 2 == 0 )); then for f in "$L"/*/out.json; do [ -f "$f" ] && cp "$f" "$keep/$(basename "$(dirname "$f")").json"; done; fi
-  cp -a "$Q/reports" "$out/runs/$i/check-reports" 2>/dev/null
-  setmode shadow; ledger_from $((i - 1))
-  read -r sh_ms sh_rc < <(runtest shadow "$i")
-  mkdir -p "$snaps/$i"; cp -a "$L/." "$snaps/$i/"
+  savout() { for f in "$L"/*/out.json; do [ -f "$f" ] && cp "$f" "$keep/$(basename "$(dirname "$f")").json"; done; return 0; }
+  sh_ms=0; sh_rc=0
+  if [ "$mode" = witness ]; then
+    # One job per commit: the ledger the previous commit's job left.
+    rm -f "$L"/*/out.json
+    if (( i % 2 == 0 )); then
+      setmode plain; read -r p_ms p_rc < <(runtest plain "$i")
+      setmode witness; read -r q_ms q_rc < <(runtest check "$i"); savout
+    else
+      setmode witness; read -r q_ms q_rc < <(runtest check "$i"); savout
+      setmode plain; read -r p_ms p_rc < <(runtest plain "$i")
+    fi
+  else
+    if (( i % 2 == 0 )); then
+      setmode plain; read -r p_ms p_rc < <(runtest plain "$i")
+      setmode check; ledger_from $((i - 1)); rm -rf "$Q/reports"; mkdir -p "$Q/reports"
+      read -r q_ms q_rc < <(runtest check "$i"); savout
+    else
+      setmode check; ledger_from $((i - 1)); rm -rf "$Q/reports"; mkdir -p "$Q/reports"
+      read -r q_ms q_rc < <(runtest check "$i"); savout
+      setmode plain; read -r p_ms p_rc < <(runtest plain "$i")
+    fi
+    cp -a "$Q/reports" "$out/runs/$i/check-reports" 2>/dev/null
+    setmode shadow; ledger_from $((i - 1))
+    read -r sh_ms sh_rc < <(runtest shadow "$i")
+    mkdir -p "$snaps/$i"; cp -a "$L/." "$snaps/$i/"
+  fi
   recorded=$(QUOD_SHIM_ACTIVE=1 "$REAL" -e 'let n=0;for(const f of process.argv.slice(1)){try{n+=Object.keys(JSON.parse(require("fs").readFileSync(f,"utf8")).files||{}).length}catch{}}console.log(n)' "$L"/*/ledger.json)
   cmp=$(QUOD_SHIM_ACTIVE=1 "$REAL" "$here/compare.mjs" "$out/runs/$i" 2>"$out/logs/compare-$i.err")
-  quodlines=$(grep -h -E '^quod( vitest)?:' "$out/logs/check-$i.log" | sort | uniq -c | sort -rn | head -6 | sed 's/^ *//' | tr '\n' '|')
-  shlines=$(grep -h -E '^quod( vitest)?:' "$out/logs/shadow-$i.log" | sort | uniq -c | sort -rn | head -6 | sed 's/^ *//' | tr '\n' '|')
-  QUOD_SHIM_ACTIVE=1 "$REAL" -e '
+  quodlines=$(grep -h -oE 'quod( vitest)?:.*' "$out/logs/check-$i.log" | grep -vE '(GITHUB|RUNNER|ACTIONS)_[A-Z_]* keyed for every' | sort | uniq -c | sort -rn | head -6 | sed 's/^ *//' | tr '\n' '|')
+  shlines=$(grep -h -oE 'quod( vitest)?:.*' "$out/logs/shadow-$i.log" 2>/dev/null | grep -vE '(GITHUB|RUNNER|ACTIONS)_[A-Z_]* keyed for every' | sort | uniq -c | sort -rn | head -6 | sed 's/^ *//' | tr '\n' '|')
+  DROPIN_MODE_EFF=$mode QUOD_SHIM_ACTIVE=1 "$REAL" -e '
     const [i, c, subject, p_ms, p_rc, q_ms, q_rc, sh_ms, sh_rc, install_ms, build_ms, irc, brc, recorded, cmp, ql, sl] = process.argv.slice(1)
     let k; try { k = JSON.parse(cmp) } catch { k = { error: cmp || "compare failed" } }
     const row = { i: +i, first: i === "0", commit: c, subject,
-      plain_ms: +p_ms, plain_exit: +p_rc, crit_ms: +q_ms, crit_exit: +q_rc, shadow_ms: +sh_ms, shadow_exit: +sh_rc,
+      plain_ms: +p_ms, plain_exit: +p_rc, ...(process.env.DROPIN_MODE_EFF === "witness" ? { quod_ms: +q_ms, quod_exit: +q_rc, mode: "witness" } : { crit_ms: +q_ms, crit_exit: +q_rc, shadow_ms: +sh_ms, shadow_exit: +sh_rc, mode: "shadow" }),
       install_ms: +install_ms + +build_ms, install_only_ms: +install_ms, build_ms: +build_ms, install_rc: +irc, build_rc: +brc,
       recorded: +recorded, invocations: k.invocations ?? 0, intercepted: k.intercepted ?? 0, files: k.files ?? 0, ran: k.ran ?? 0, replayed: k.replayed ?? 0,
       wrong: k.error ? null : k.wrong.map((w) => w.file), wrong_detail: k.wrong, flaky: k.flaky?.map((w) => w.file) ?? null, flaky_detail: k.flaky,
@@ -149,13 +177,16 @@ done
 # recording, with the variables a pull_request job has.
 if [ $active = 1 ]; then
   last=$(( ${#commits[@]} - 1 ))
-  setmode check; ledger_from "$last"; rm -rf "$Q/reports"; mkdir -p "$Q/reports"
+  if [ "$mode" = witness ]; then cp -a "$L" "$L.keep"; setmode witness; rm -f "$L"/*/out.json
+  else setmode check; ledger_from "$last"; fi
+  rm -rf "$Q/reports"; mkdir -p "$Q/reports"
   DROPIN_RUN_ENV="GITHUB_EVENT_NAME=pull_request GITHUB_REF=refs/pull/1/merge GITHUB_REF_NAME=1/merge GITHUB_HEAD_REF=dropin-pr GITHUB_BASE_REF=${GITHUB_REF_NAME:-main}" \
     runtest pr "$last" >/dev/null
   mkdir -p "$out/runs/$last/check-out-pr"
   for f in "$L"/*/out.json; do [ -f "$f" ] && cp "$f" "$out/runs/$last/check-out-pr/"; done
-  pr=$(grep -h -E '^quod vitest: (ran|every file)|shared input changed' "$out/logs/pr-$last.log" | head -5 | tr '\n' '|')
-  echo "pull_request check of the last commit against its own push recording: $pr" | tee "$out/pr.txt"
+  pr=$(grep -h -oE 'quod vitest: (ran|every file).*|shared input changed.*' "$out/logs/pr-$last.log" | head -6 | tr '\n' '|')
+  [ "$mode" = witness ] && { rm -rf "$L"; mv "$L.keep" "$L"; }
+  echo "pull_request check of the last commit against the ledger the push jobs left: $pr" | tee "$out/pr.txt"
 fi
 # Nothing for the action's post step to upload (its artifact name is the
 # same in every matrix job).

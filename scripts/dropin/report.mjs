@@ -23,7 +23,7 @@ const files = sum(timed.map((r) => r.files))
 const replayed = sum(timed.map((r) => r.replayed))
 const wrong = rows.reduce((n, r) => n + (r.wrong === null ? 1 : r.wrong.length), 0)
 // An exit difference explained by a test that ran (not replayed) and flaked is plain vitest's flakiness, not Quod's.
-const exitMismatch = rows.filter((r) => r.plain_exit !== r.crit_exit && !(r.flaky?.length && !r.wrong?.length)).map((r) => r.i)
+const exitMismatch = rows.filter((r) => r.plain_exit !== (r.crit_exit ?? r.quod_exit) && !(r.flaky?.length && !r.wrong?.length)).map((r) => r.i)
 const flakyCommits = rows.filter((r) => r.flaky?.length).map((r) => r.i)
 const recordedMax = Math.max(0, ...rows.map((r) => r.recorded))
 const declined = [...new Set(rows.flatMap((r) => r.declined))]
@@ -40,7 +40,7 @@ if (!invocations) why.push('no vitest command line observed through the node shi
 else if (!intercepted) why.push(`Quod declined every vitest command line (${declined.length} kinds)`)
 else if (intercepted < invocations) why.push(`Quod declined ${invocations - intercepted} of ${invocations} vitest invocations`)
 if (exitMismatch.length) why.push(`check exit code differs from plain on commits ${exitMismatch.join(',')}`)
-if (intercepted && !recordedMax) why.push('the shadow recorded nothing')
+if (intercepted && !recordedMax) why.push('nothing was recorded')
 if (intercepted && recordedMax && !replayed) why.push('recorded, but nothing ever replayed')
 if (missing.length) why.push(`missing reports: ${missing.slice(0, 3).join('; ')}`)
 if (wrong) why.push(`${wrong} wrong replays`)
@@ -67,8 +67,9 @@ const row = {
   invocations,
   recorded_files_max: recordedMax,
   plain_test_s_total: +s(sum(timed.map((r) => r.plain_ms))),
-  check_test_s_total: +s(sum(timed.map((r) => r.crit_ms))),
-  shadow_test_s_total: +s(sum(timed.map((r) => r.shadow_ms))),
+  check_test_s_total: +s(sum(timed.map((r) => r.crit_ms ?? r.quod_ms))),
+  mode: rows[0]?.mode ?? '',
+  shadow_test_s_total: +s(sum(timed.map((r) => r.shadow_ms ?? 0))),
   setup_s_total: +s(sum(timed.map((r) => r.install_ms))),
   plain_failing_commits: plainFail,
   setup_failing_commits: setupFail,
@@ -89,7 +90,7 @@ o.push('')
 o.push('| # | commit | setup | plain | check | shadow | exit p/c/s | vitest cmds (Quod) | files | ran | replayed | recorded | wrong | flaky | Quod says (check) |')
 o.push('|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---|')
 for (const r of rows) {
-  o.push(`| ${r.i}${r.first ? ' (first)' : ''} | \`${r.commit.slice(0, 9)}\` ${String(r.subject).slice(0, 40).replace(/\|/g, '/')} | ${s(r.install_ms)} s | ${s(r.plain_ms)} s | ${s(r.crit_ms)} s | ${s(r.shadow_ms)} s | ${r.plain_exit}/${r.crit_exit}/${r.shadow_exit} | ${r.invocations} (${r.intercepted}) | ${r.files} | ${r.ran} | ${r.replayed} | ${r.recorded} | ${r.wrong === null ? 'ERR' : r.wrong.length} | ${r.flaky?.length ?? '-'} | ${String(r.quod_check_log || '').slice(0, 160).replace(/\|/g, ' / ')} |`)
+  o.push(`| ${r.i}${r.first ? ' (first)' : ''} | \`${r.commit.slice(0, 9)}\` ${String(r.subject).slice(0, 40).replace(/\|/g, '/')} | ${s(r.install_ms)} s | ${s(r.plain_ms)} s | ${s(r.crit_ms ?? r.quod_ms)} s | ${r.shadow_ms != null ? s(r.shadow_ms) + ' s' : '-'} | ${r.plain_exit}/${r.crit_exit ?? r.quod_exit}/${r.shadow_exit ?? '-'} | ${r.invocations} (${r.intercepted}) | ${r.files} | ${r.ran} | ${r.replayed} | ${r.recorded} | ${r.wrong === null ? 'ERR' : r.wrong.length} | ${r.flaky?.length ?? '-'} | ${String(r.quod_check_log || '').slice(0, 160).replace(/\|/g, ' / ')} |`)
 }
 o.push('')
 for (const r of rows) for (const w of r.wrong_detail ?? []) o.push(`- WRONG at ${r.i}: ${w.file} plain=${w.plain} check=${w.check} -${JSON.stringify(w.minus)} +${JSON.stringify(w.plus)}`)
