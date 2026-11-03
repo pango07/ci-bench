@@ -1,0 +1,118 @@
+# quod vitest with its ledger in Quod Cloud (api.quodci.com), end to end:
+# one commit of a real project per run, the critical path (`--no-record`)
+# then the shadow (records, spot-checks, saves the ledger), both with
+# `--cloud`. Dispatch it once per commit, oldest first: each run restores
+# the ledger the previous run's shadow saved, and both runs' reports show
+# on the dashboard (app.quodci.com).
+#
+#   gh workflow run cloud-vitest.yml -R pango07/ci-bench -f commit=<sha>
+#
+# Auth is this job's GitHub OIDC token (audience quodci); ci-bench must be in
+# a Quod Cloud team. A dispatch on main is a writer: it saves the default
+# branch's ledger.
+name: cloud-vitest
+
+on:
+  workflow_dispatch:
+    inputs:
+      bin:
+        description: The runner binary, a release tag of this repo (bin-<sha>), or latest
+        required: false
+        default: latest
+      repo:
+        description: The project (owner/name on GitHub)
+        required: false
+        default: vuejs/router
+      commit:
+        description: The project commit to test
+        required: true
+      vitest_args:
+        description: vitest's arguments
+        required: false
+        default: run
+      suite:
+        description: The suite's name in Quod Cloud
+        required: false
+        default: vuejs-router
+      node:
+        description: Node.js version (installed at /usr/local/node)
+        required: false
+        default: 24.22.2
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  BIN: ${{ inputs.bin }}
+  REPO: ${{ inputs.repo }}
+  COMMIT: ${{ inputs.commit }}
+  VITEST_ARGS: ${{ inputs.vitest_args }}
+  SUITE: ${{ inputs.suite }}
+  NODE_VERSION: ${{ inputs.node }}
+  OBSERVE: '0'
+  PROJ: /work/proj
+  QUOD_SERVER: https://api.quodci.com
+  # The public key lookups are signed with (GET /v1/keys, ed25519:11142c7cc0d0dd7f).
+  QUOD_SERVER_KEY: d23312bfc239da7dcd29c651dff3aea71beb08f0b3a732dff040f461a259f9f8
+  QUOD_JOB_ID: ${{ job.check_run_id }}
+
+jobs:
+  vitest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: host (/work, node)
+        run: bash scripts/host-setup.sh
+      - name: runner binary (release ${{ inputs.bin }})
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$BIN
+          [ "$tag" = latest ] && tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          gh release download "$tag" -R "$GITHUB_REPOSITORY" -p 'quod-linux-x86_64.tar.gz' -D "$RUNNER_TEMP"
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/quod-linux-x86_64.tar.gz"
+          echo "QUOD=$RUNNER_TEMP/quod" >> "$GITHUB_ENV"
+          echo "binary: $tag" >> "$GITHUB_STEP_SUMMARY"
+      - name: the project at ${{ inputs.commit }}, dependencies
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+        run: |
+          echo /usr/local/node/bin >> "$GITHUB_PATH"
+          export PATH=/usr/local/node/bin:$PATH
+          git clone -q --filter=blob:none "https://github.com/$REPO" "$PROJ"
+          cd "$PROJ"
+          git checkout -q "$COMMIT"
+          pm=$(node -p "(require('./package.json').packageManager||'pnpm@latest').split('+')[0]")
+          sudo env PATH="$PATH" npm i -g -s "$pm"
+          pnpm install --frozen-lockfile
+      - name: critical path (quod vitest --no-record --cloud)
+        env:
+          QUOD_JOB_NAME: critical path
+        run: |
+          cd "$PROJ"
+          start=$(date +%s%N)
+          "$QUOD" vitest --no-record --dir "$RUNNER_TEMP/ledger" --cloud --suite "$SUITE" \
+            --summary "$RUNNER_TEMP/critical-summary.json" \
+            -- $VITEST_ARGS --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/report.json"
+          echo "critical path: $(( ($(date +%s%N) - start) / 1000000 )) ms" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/critical-summary.json"
+      - name: shadow (quod vitest --cloud records and saves)
+        if: always()
+        env:
+          QUOD_JOB_NAME: shadow
+        run: |
+          cd "$PROJ"
+          "$QUOD" vitest --dir "$RUNNER_TEMP/ledger" --cloud --suite "$SUITE" --audits 4 \
+            --expect-report "$RUNNER_TEMP/report.json" --summary "$RUNNER_TEMP/shadow-summary.json" \
+            -- $VITEST_ARGS --reporter=json --outputFile.json="$RUNNER_TEMP/shadow.json" || true
+          cat "$RUNNER_TEMP/shadow-summary.json" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: cloud-vitest
+          path: |
+            ${{ runner.temp }}/*-summary.json
+            ${{ runner.temp }}/report.json
+          if-no-files-found: ignore
