@@ -34,7 +34,7 @@ on:
         required: false
         default: '20'
       gotest_args:
-        description: go test's arguments (keep -json: the comparison reads it)
+        description: "go test's arguments (keep -json: the comparison reads it)"
         required: false
         default: -json ./...
       go:
