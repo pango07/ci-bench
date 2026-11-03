@@ -1159,7 +1159,7 @@ def _module_fp(name, m):
                             tags[k + "." + ck] = _tag(cv, 1)
                 continue
             tags[k] = _tag(v, 2)
-        return (ids, tags, True)
+        return (ids, tags, True, dict(d))
     # Everything else: rebinding only (C-speed).
     ids = dict(zip(d, map(id, d.values())))
     for k in _SKIP_ATTRS:
@@ -1170,7 +1170,7 @@ def _module_fp(name, m):
     elif name == "builtins":
         ids.pop("_", None)
         ids.pop("__import__", None)
-    return (ids, None, False)
+    return (ids, None, False, dict(d))
 
 
 def _globals_fp():
@@ -1264,17 +1264,41 @@ def _value_at(name, key):
     return v
 
 
+def _collects(name, relpath, pattern):
+    """pytest's python_files match (fnmatch_ex): the base name, or for a
+    pattern with a separator the path."""
+    if "/" not in pattern:
+        return fnmatch.fnmatch(name, pattern)
+    return fnmatch.fnmatch(absp(relpath), "*/" + pattern)
+
+
+_MISSING = object()
+
+
+def _same_value(a, b):
+    """Equal immutable scalars (or tuples of them): a rebinding that changes
+    nothing anyone can observe."""
+    if a is _MISSING or b is _MISSING or type(a) is not type(b):
+        return False
+    t = type(a)
+    if t in _IMMUTABLE_SCALARS:
+        return a == b
+    if t is tuple and set(map(type, a)) <= _IMMUTABLE_SCALARS and set(map(type, b)) <= _IMMUTABLE_SCALARS:
+        return a == b
+    return False
+
+
 def fp_delta(before, extra, after):
     """What changed from `before` (and modules first loaded since, as they
     were at load: `extra`) to `after`, as {key: tag}."""
     d = {}
     none_id = id(None)
     bm = before["mods"]
-    for name, (ids, tags, ws) in after["mods"].items():
+    for name, (ids, tags, ws, vals) in after["mods"].items():
         b = bm.get(name) or extra.get(name)
         if b is None:
             continue  # a module first loaded in the window, never seen at load
-        bids, btags, _ = b
+        bids, btags, _, bvals = b
         if ids == bids and tags == btags:
             continue
         prefix = ("w:" if ws else "t:") + name + ":"
@@ -1282,6 +1306,8 @@ def fp_delta(before, extra, after):
             bi = bids.get(k)
             if bi == i:
                 continue
+            if _same_value(bvals.get(k, _MISSING), vals.get(k, _MISSING)):
+                continue  # rebound to an equal immutable value (time.tzset, a re-assignment)
             if not ws and (bi is None or bi == none_id):
                 continue  # a third-party module's new attribute or lazy init
             if ws and tags is not None and k in tags:
@@ -1953,7 +1979,7 @@ class Quod:
                 r = n if d == "." else d + "/" + n
                 if r in known:
                     continue
-                if any(fnmatch.fnmatch(n, p) for p in pats) and os.path.isfile(absp(r)):
+                if any(_collects(n, r, p) for p in pats) and os.path.isfile(absp(r)):
                     new.append(r)
         for r in sorted(new, key=_sortkey):
             k = _sortkey(r)
