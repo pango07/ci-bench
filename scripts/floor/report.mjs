@@ -9,7 +9,7 @@ const rows = []
 for (const f of fs.readdirSync(dir, { recursive: true })) if (String(f).endsWith('.json')) rows.push(JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')))
 const jobs = new Map(JSON.parse(fs.readFileSync(jobsFile, 'utf8')).map((j) => [j.name, (new Date(j.completed_at) - new Date(j.started_at)) / 1000]))
 const s = (ms) => (ms == null ? '' : (ms / 1000).toFixed(1))
-const order = { plain: 0, pr276: 1, quod: 2 }
+const order = { plain: 0, pr276: 1, quod: 2, 'quod-par': 3 }
 rows.sort((a, b) => a.case.localeCompare(b.case) || order[a.strategy] - order[b.strategy] || a.rep - b.rep)
 console.log('| case | strategy | rep | nm restore s | install s | nm save s | tc restore s | typecheck s | saves s | **CI fast s** | **CI cost s** | turbo cached | nm hit | rc |')
 console.log('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---:|')

@@ -1,20 +1,24 @@
 # The floor: install and typecheck of a Next.js + Convex monorepo (npm
 # workspaces, turbo, tsc per package; scripts/floor/gen.mjs), per kind of
-# commit, three ways:
-#   plain  setup-node's npm cache, `npm ci`, every package's tsc
-#   pr276  class-management PR #276: node_modules from actions/cache keyed on
-#          the lockfile, every package.json, .npmrc, node, OS and arch (a miss
-#          installs and saves), turbo's cache restored by prefix
-#   quod   pr276 plus each package's .tsbuildinfo (tsc --incremental),
-#          restored by prefix: a package turbo misses re-checks only what
-#          changed
+# commit, four ways:
+#   plain     setup-node's npm cache, `npm ci`, every package's tsc
+#   pr276     class-management PR #276: node_modules from actions/cache keyed
+#             on the lockfile, every package.json, .npmrc, node, OS and arch
+#             (a miss installs and saves), turbo's cache restored by prefix
+#   quod      pr276, plus each package's .tsbuildinfo (tsc --incremental)
+#             restored by prefix, so a package turbo misses re-checks only
+#             what changed; and npm's download cache only on a node_modules
+#             miss, restored by prefix (the previous lockfile's tarballs)
+#   quod-par  quod, with typecheck depending on transit only (not
+#             ^typecheck): the packages' tsc runs in parallel; transit still
+#             puts every dependency's files in a package's hash
 # A seed job per cached strategy is the previous CI run (the base commit):
 # it saves what the case jobs restore. Every case job is a fresh runner on
 # the base plus one commit: source, docs, lock (convex bumped), typeerror
 # (a shared type change breaks two pages that did not change).
 #
 #   gh workflow run bench-floor.yml -R pango07/ci-bench
-#   gh workflow run bench-floor.yml -R pango07/ci-bench -f scale=1.5 -f reps='[1,2]'
+#   gh workflow run bench-floor.yml -R pango07/ci-bench -f scale=4 -f reps='[1,2]'
 name: bench-floor
 
 on:
@@ -23,7 +27,7 @@ on:
       scale:
         description: Fixture size (1 = 150 models, 40 tables, 150 function modules, 250 pages)
         required: false
-        default: '1'
+        default: '4'
       reps:
         description: Repetitions (a JSON list)
         required: false
@@ -49,24 +53,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        strategy: [pr276, quod]
+        strategy: [pr276, quod, quod-par]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       STRATEGY: ${{ matrix.strategy }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/floor
       - name: fixture (base)
         run: |
-          node scripts/floor/gen.mjs "$FX" --scale "${{ inputs.scale }}" $([ "$STRATEGY" = quod ] && echo --incremental)
+          node scripts/floor/gen.mjs "$FX" --scale "${{ inputs.scale }}" $(bash scripts/floor/flags.sh "$STRATEGY")
           cd "$FX" && git init -q -b main && git add -A && git -c user.email=b@example.com -c user.name=b commit -qm base
-      - uses: actions/setup-node@v4
+      - if: matrix.strategy == 'pr276'
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node }}
           cache: npm
           cache-dependency-path: fx/package-lock.json
+      - if: matrix.strategy != 'pr276'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node }}
       - id: key
-        run: echo "nm=nm-$STRATEGY-${{ github.run_id }}-$(bash scripts/floor/nm-key.sh "$FX")" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "nm=nm-$STRATEGY-${{ github.run_id }}-$(bash scripts/floor/nm-key.sh "$FX")" >> "$GITHUB_OUTPUT"
+          echo "npm=npm-$STRATEGY-${{ github.run_id }}-$(sha256sum "$FX/package-lock.json" | cut -c1-40)" >> "$GITHUB_OUTPUT"
       - name: install
         run: cd "$FX" && npm ci --no-audit --no-fund --loglevel=error && du -sh node_modules
       - uses: actions/cache/save@v4
@@ -76,27 +89,34 @@ jobs:
             fx/apps/*/node_modules
             fx/packages/*/node_modules
           key: ${{ steps.key.outputs.nm }}
+      - if: matrix.strategy != 'pr276'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.npm
+          key: ${{ steps.key.outputs.npm }}
       - name: typecheck (full, the base commit's run)
         run: set -o pipefail; cd "$FX" && npx turbo run typecheck 2>&1 | tail -40
       - uses: actions/cache/save@v4
         with:
           path: fx/.turbo/cache
           key: turbo-${{ matrix.strategy }}-${{ github.run_id }}-seed
-      - if: matrix.strategy == 'quod'
+      - if: matrix.strategy != 'pr276'
         uses: actions/cache/save@v4
         with:
           path: |
             fx/apps/*/.tsbuildinfo
             fx/packages/*/.tsbuildinfo
-          key: tsbi-${{ github.run_id }}-seed
+          key: tsbi-${{ matrix.strategy }}-${{ github.run_id }}-seed
 
+  # plain needs no seed but waits for one: setup-node's npm cache (keyed on
+  # the lockfile) is then warm, as a repository's would be.
   case:
     name: ${{ matrix.strategy }} ${{ matrix.case }} ${{ matrix.rep }}
     needs: seed
     strategy:
       fail-fast: false
       matrix:
-        strategy: [plain, pr276, quod]
+        strategy: [plain, pr276, quod, quod-par]
         case: [source, docs, lock, typeerror]
         rep: ${{ fromJSON(inputs.reps) }}
     runs-on: ubuntu-latest
@@ -106,26 +126,36 @@ jobs:
       CASE: ${{ matrix.case }}
       REP: ${{ matrix.rep }}
       JOB_NAME: ${{ matrix.strategy }} ${{ matrix.case }} ${{ matrix.rep }}
+      QUOD_LIKE: ${{ startsWith(matrix.strategy, 'quod') }}
     steps:
       - name: start
         run: read -r up _ </proc/uptime; echo "start $(( 10#${up/./} * 10 ))" > "$RUNNER_TEMP/stamps"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/floor
       - name: fixture (base, then this case's commit)
         run: |
-          inc=$([ "$STRATEGY" = quod ] && echo --incremental || true)
-          node scripts/floor/gen.mjs "$FX" --scale "${{ inputs.scale }}" $inc
+          flags=$(bash scripts/floor/flags.sh "$STRATEGY")
+          node scripts/floor/gen.mjs "$FX" --scale "${{ inputs.scale }}" $flags
           cd "$FX" && git init -q -b main && git add -A && git -c user.email=b@example.com -c user.name=b commit -qm base
-          cd .. && node scripts/floor/gen.mjs "$FX" --scale "${{ inputs.scale }}" $inc --variant "$CASE"
+          cd .. && node scripts/floor/gen.mjs "$FX" --scale "${{ inputs.scale }}" $flags --variant "$CASE"
           cd "$FX" && git add -A && git -c user.email=b@example.com -c user.name=b commit -qm "$CASE" && git show --stat HEAD | tail -8
-      - uses: actions/setup-node@v4
+      - if: ${{ !startsWith(matrix.strategy, 'quod') }}
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node }}
           cache: npm
           cache-dependency-path: fx/package-lock.json
+      - if: startsWith(matrix.strategy, 'quod')
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node }}
       - run: bash scripts/floor/stamp.sh setup
       - id: key
         if: matrix.strategy != 'plain'
-        run: echo "nm=nm-$STRATEGY-${{ github.run_id }}-$(bash scripts/floor/nm-key.sh "$FX")" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "nm=nm-$STRATEGY-${{ github.run_id }}-$(bash scripts/floor/nm-key.sh "$FX")" >> "$GITHUB_OUTPUT"
+          echo "npm=npm-$STRATEGY-${{ github.run_id }}-$(sha256sum "$FX/package-lock.json" | cut -c1-40)" >> "$GITHUB_OUTPUT"
       - id: nm
         if: matrix.strategy != 'plain'
         uses: actions/cache/restore@v4
@@ -135,6 +165,14 @@ jobs:
             fx/apps/*/node_modules
             fx/packages/*/node_modules
           key: ${{ steps.key.outputs.nm }}
+      # quod: npm's download cache only when node_modules missed, by prefix.
+      - id: npmc
+        if: startsWith(matrix.strategy, 'quod') && steps.nm.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.npm
+          key: ${{ steps.key.outputs.npm }}
+          restore-keys: npm-${{ matrix.strategy }}-${{ github.run_id }}-
       - run: bash scripts/floor/stamp.sh nm_restored
       - name: install
         if: matrix.strategy == 'plain' || steps.nm.outputs.cache-hit != 'true'
@@ -159,14 +197,14 @@ jobs:
           key: turbo-${{ matrix.strategy }}-${{ github.run_id }}-case-${{ matrix.case }}-${{ matrix.rep }}
           restore-keys: turbo-${{ matrix.strategy }}-${{ github.run_id }}-seed
       - id: tsbi
-        if: matrix.strategy == 'quod'
+        if: startsWith(matrix.strategy, 'quod')
         uses: actions/cache/restore@v4
         with:
           path: |
             fx/apps/*/.tsbuildinfo
             fx/packages/*/.tsbuildinfo
-          key: tsbi-${{ github.run_id }}-case-${{ matrix.case }}-${{ matrix.rep }}
-          restore-keys: tsbi-${{ github.run_id }}-seed
+          key: tsbi-${{ matrix.strategy }}-${{ github.run_id }}-case-${{ matrix.case }}-${{ matrix.rep }}
+          restore-keys: tsbi-${{ matrix.strategy }}-${{ github.run_id }}-seed
       - run: bash scripts/floor/stamp.sh tc_restored
       - name: typecheck
         id: typecheck
@@ -183,13 +221,18 @@ jobs:
         with:
           path: fx/.turbo/cache
           key: turbo-${{ matrix.strategy }}-${{ github.run_id }}-case-${{ matrix.case }}-${{ matrix.rep }}
-      - if: matrix.strategy == 'quod'
+      - if: startsWith(matrix.strategy, 'quod')
         uses: actions/cache/save@v4
         with:
           path: |
             fx/apps/*/.tsbuildinfo
             fx/packages/*/.tsbuildinfo
-          key: tsbi-${{ github.run_id }}-case-${{ matrix.case }}-${{ matrix.rep }}
+          key: tsbi-${{ matrix.strategy }}-${{ github.run_id }}-case-${{ matrix.case }}-${{ matrix.rep }}
+      - if: startsWith(matrix.strategy, 'quod') && steps.nm.outputs.cache-hit != 'true' && steps.npmc.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.npm
+          key: ${{ steps.key.outputs.npm }}
       - run: bash scripts/floor/stamp.sh saved
       - name: row
         env:
@@ -229,6 +272,8 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/floor
       - uses: actions/download-artifact@v4
         with:
           pattern: row-*
@@ -237,9 +282,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" --jq '.jobs' > jobs.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" --paginate --jq '.jobs[]' | jq -s . > jobs.json
           node scripts/floor/report.mjs rows jobs.json | tee -a "$GITHUB_STEP_SUMMARY"
-          jq -r '.[] | "\(.name)\t\(.started_at)\t\(.completed_at)"' jobs.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: floor-report

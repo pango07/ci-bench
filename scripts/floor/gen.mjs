@@ -1,7 +1,7 @@
 // The floor fixture: a Next.js + Convex monorepo shaped like the pilot's
 // (npm workspaces, turbo, tsc per package), generated.
 //
-//   node gen.mjs <dir> [--incremental] [--variant base|source|docs|lock|typeerror] [--scale 1]
+//   node gen.mjs <dir> [--incremental] [--parallel] [--variant base|source|docs|lock|typeerror] [--scale 1]
 //
 //   packages/shared   zod models (z.infer, mapped types)
 //   packages/backend  Convex: a schema of tables with indexes, queries and
@@ -10,7 +10,9 @@
 //                     the backend's typed api, and the shared models
 // Every package typechecks with `tsc --noEmit` (`--incremental`: with a
 // .tsbuildinfo next to its tsconfig). turbo.json is the pilot's: typecheck
-// depends on ^typecheck and a transit task; the lockfile is an input.
+// depends on ^typecheck and a transit task; the lockfile is an input
+// (`--parallel`: on transit only, so the packages' tsc runs in parallel;
+// transit still puts every dependency's files in a package's hash).
 //
 // Variants are a commit on top of the base:
 //   source     two backend functions and two pages change (shared does not)
@@ -24,6 +26,7 @@ import path from 'node:path'
 const args = process.argv.slice(2)
 const dir = path.resolve(args[0])
 const incremental = args.includes('--incremental')
+const parallel = args.includes('--parallel')
 const variant = args.includes('--variant') ? args[args.indexOf('--variant') + 1] : 'base'
 const scale = args.includes('--scale') ? +args[args.indexOf('--scale') + 1] : 1
 const here = path.dirname(new URL(import.meta.url).pathname)
@@ -54,7 +57,7 @@ put('turbo.json', json({
   $schema: 'https://turborepo.com/schema.json',
   tasks: {
     transit: { dependsOn: ['^transit'] },
-    typecheck: { dependsOn: ['^typecheck', 'transit'], inputs: ['$TURBO_DEFAULT$', '$TURBO_ROOT$/package-lock.json'] },
+    typecheck: { dependsOn: parallel ? ['transit'] : ['^typecheck', 'transit'], inputs: ['$TURBO_DEFAULT$', '$TURBO_ROOT$/package-lock.json'] },
   },
 }))
 put('README.md', '# fx\n\nA Next.js + Convex monorepo.\n')
@@ -317,4 +320,4 @@ for (const [p, s] of files) {
 }
 const lock = path.join(here, 'locks', variant === 'lock' ? 'bumped.json' : 'base.json')
 if (fs.existsSync(lock)) fs.copyFileSync(lock, path.join(dir, 'package-lock.json'))
-console.log(`fx: ${files.size} files (${S} models, ${T} tables, ${F} function modules, ${W} pages), variant ${variant}${incremental ? ', incremental' : ''}`)
+console.log(`fx: ${files.size} files (${S} models, ${T} tables, ${F} function modules, ${W} pages), variant ${variant}${incremental ? ', incremental' : ''}${parallel ? ', parallel' : ''}`)
