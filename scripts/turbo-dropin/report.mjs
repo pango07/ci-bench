@@ -62,6 +62,7 @@ for (const j of jobs) {
     nm_missed: /no node_modules saved yet for this lockfile/.test(log),
     nm_saved: /node_modules saved for this lockfile/.test(log),
     remote: /turbo's remote cache is Quod Cloud/.test(log),
+    image: /Image Release: \S+tag\/(\S+)/.exec(log)?.[1] ?? '',
   })
 }
 const order = { seed: 0, source: 1, docs: 2, lock: 3, typeerror: 4 }
@@ -92,7 +93,9 @@ for (const c of ['source', 'docs', 'lock', 'typeerror']) {
     ok(q.nm_missed && !q.npm_ci_skipped, 'lock: node_modules missed and npm ci ran')
     ok(q.turbo.startsWith('0/'), `lock: no turbo task replayed (${q.turbo})`)
   } else {
-    ok(q.npm_ci_skipped, `${c}: node_modules restored and npm ci skipped`)
+    const seed = rows.find((r) => r.case === 'seed')
+    if (q.npm_ci_skipped || !seed || seed.image === q.image) ok(q.npm_ci_skipped, `${c}: node_modules restored and npm ci skipped`)
+    else checks.push(`note ${c}: node_modules missed: this runner's image (${q.image}) is not the seed's (${seed.image})`)
   }
   if (c === 'docs') ok(q.turbo === '3/3', `docs: every turbo task replayed (${q.turbo})`)
   ok(q.remote, `${c}: turbo used Quod Cloud`)

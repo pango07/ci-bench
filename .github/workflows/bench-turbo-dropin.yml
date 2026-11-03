@@ -133,7 +133,7 @@ jobs:
           node-version: ${{ inputs.node }}
           cache: npm
       - name: 'ci: quod'
-        uses: pango07/quod-action@ea7aba32056e8e71c9cb75e3de78dc2017f56a20
+        uses: pango07/quod-action@8a17894df66e535d274ea57b3408c81cc8b9c9a1
         with:
           server: ${{ steps.srv.outputs.url }}
       - name: 'ci: install'
@@ -212,7 +212,7 @@ jobs:
           node-version: ${{ inputs.node }}
           cache: npm
       - name: 'ci: quod'
-        uses: pango07/quod-action@ea7aba32056e8e71c9cb75e3de78dc2017f56a20
+        uses: pango07/quod-action@8a17894df66e535d274ea57b3408c81cc8b9c9a1
         with:
           server: ${{ steps.srv.outputs.url }}
       - name: 'ci: install'
@@ -237,8 +237,12 @@ jobs:
           git -C b sparse-checkout set scripts/turbo-dropin
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" --paginate --jq '.jobs[]' | jq -s . > jobs.json
           mkdir -p logs
+          # A job's log is there a little after the job completes.
           for id in $(jq -r '.[] | select(.name != "report" and .name != "server") | .id' jobs.json); do
-            gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" > "logs/$id.log" || true
+            for _ in $(seq 1 30); do
+              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" > "logs/$id.log" 2>/dev/null && grep -q 'Cleaning up orphan processes' "logs/$id.log" && break
+              sleep 10
+            done
           done
           node b/scripts/turbo-dropin/report.mjs jobs.json logs | tee -a "$GITHUB_STEP_SUMMARY"
       - if: always()
