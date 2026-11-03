@@ -1,250 +1,132 @@
-# Drop-in: a customer's CI job, unchanged, with and without one added line
-# (`uses: pango07/quod-action@<sha>`), on the floor fixture (a Next.js +
-# Convex monorepo: npm workspaces, turbo, tsc per package; scripts/floor/gen.mjs)
-# per kind of commit.
-#
-# The customer's job is the `ci:` steps: setup-node (with its npm cache),
-# [the Quod line], `npm ci`, `npx turbo run typecheck`. Nothing else in it
-# changes. The `bench:` steps are the harness (they stand in for checkout)
-# and are left out of the numbers.
-#
-#   seed      the previous CI run (the base commit, as a push to main would
-#             run it): fills what the case jobs find
-#   plain/quod a fresh runner on the base plus one commit: source, docs,
-#             lock (convex bumped), typeerror (a shared type change breaks
-#             two pages that did not change), plain and quod
-#   server    the Quod Cloud stand-in for this run: quod-server (release
-#             srv-<sha> of this repository) behind a Cloudflare quick tunnel,
-#             GitHub OIDC as in production; a fresh one per run
-#   report    CI fast and CI cost per job from GitHub's step times, and the
-#             correctness checks
-#
-# Each run is one repetition: a .npmrc comment with the run id makes every
-# run's dependency key its own (a dependency bump misses in every run).
+# Drop-in compatibility: Quod added to real open-source CI test jobs the way a
+# customer adds it (the action line + `permissions: id-token: write`), one
+# matrix job per repository (scripts/dropin/corpus.json). Each job sets up
+# the project as its CI does (pnpm / bun / corepack / setup-node, their
+# install, their build), runs pango07/quod-action (mode check), then replays
+# N consecutive commits: plain, check and shadow per commit, compared per
+# file and per test (scripts/dropin/run.sh). The scoreboard job collects
+# every row (scoreboard.json and the job summary).
 #
 #   gh workflow run bench-dropin.yml -R pango07/ci-bench
+#   gh workflow run bench-dropin.yml -R pango07/ci-bench -f only=axios,yup -f commits=3
 name: bench-dropin
 
 on:
   workflow_dispatch:
     inputs:
-      scale:
-        description: Fixture size (1 = 150 models, 40 tables, 150 function modules, 250 pages)
+      only:
+        description: Comma-separated corpus ids (empty = all)
         required: false
-        default: '4'
-      node:
-        description: Node.js version
+        default: ''
+      commits:
+        description: Commits per repository (a corpus entry may cap it lower)
         required: false
-        default: 24.22.2
-      server:
-        description: The quod-server release (srv-<sha>)
-        required: true
+        default: '12'
 
 permissions:
   contents: read
-
-env:
-  TURBO_TELEMETRY_DISABLED: '1'
-  TURBO_NO_UPDATE_NOTIFIER: '1'
-  DO_NOT_TRACK: '1'
-  NEXT_TELEMETRY_DISABLED: '1'
+  id-token: write
 
 jobs:
-  server:
+  corpus:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
-    permissions:
-      contents: read
-      actions: read
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
     steps:
-      - name: quod-server and a tunnel
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: m
         env:
-          GH_TOKEN: ${{ github.token }}
+          ONLY: ${{ inputs.only }}
+          DROPIN_COMMITS: ${{ inputs.commits }}
+        run: echo "matrix=$(node scripts/dropin/matrix.mjs "$ONLY" "$DROPIN_COMMITS")" >> "$GITHUB_OUTPUT"
+
+  bench:
+    needs: corpus
+    name: ${{ matrix.id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.corpus.outputs.matrix) }}
+    env:
+      DROPIN_SHA: ${{ matrix.sha }}
+      DROPIN_COMMITS: ${{ matrix.commits }}
+      DROPIN_INSTALL: ${{ matrix.install }}
+      DROPIN_BUILD: ${{ matrix.build }}
+      DROPIN_TEST: ${{ matrix.test }}
+      DROPIN_WORKDIR: ${{ matrix.workdir }}
+      DROPIN_EXTRA_ENV: ${{ matrix.env }}
+      DROPIN_META: ${{ matrix.meta }}
+    steps:
+      # The bench's scripts go to the runner's temp; the workspace becomes the project.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: _cibench
+      - name: bench scripts, the project checkout, runner tools before set-up
+        env:
+          REPO: ${{ matrix.repo }}
         run: |
-          set -euo pipefail
-          gh release download "${{ inputs.server }}" -R "$GITHUB_REPOSITORY" -p quod-server-linux-x86_64.tar.gz -D "$RUNNER_TEMP"
-          tar -xzf "$RUNNER_TEMP/quod-server-linux-x86_64.tar.gz" -C "$RUNNER_TEMP"
-          curl -fsSL -o "$RUNNER_TEMP/cloudflared" https://github.com/cloudflare/cloudflared/releases/download/2025.11.1/cloudflared-linux-amd64
-          chmod +x "$RUNNER_TEMP/cloudflared"
-          teams='{"teams":[{"slug":"bench","github_owner_ids":[${{ github.repository_owner_id }}],"github_repository_ids":[${{ github.repository_id }}]}],"oidc":{}}'
-          mkdir -p "$RUNNER_TEMP/data"
-          QUOD_DATA_DIR="$RUNNER_TEMP/data" QUOD_DEV=1 PORT=8080 QUOD_BIND=127.0.0.1 \
-            QUOD_SIGNING_KEY="$(openssl rand -hex 32)" QUOD_TEAMS_JSON="$teams" \
-            nohup "$RUNNER_TEMP/quod-server" > "$RUNNER_TEMP/server.log" 2>&1 &
-          nohup "$RUNNER_TEMP/cloudflared" tunnel --no-autoupdate --url http://127.0.0.1:8080 > "$RUNNER_TEMP/tunnel.log" 2>&1 &
-          url=
-          for _ in $(seq 1 60); do
-            url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$RUNNER_TEMP/tunnel.log" | head -1 || true)
-            [ -n "$url" ] && curl -fsS -m 5 "$url/healthz" >/dev/null 2>&1 && break
-            sleep 2
-          done
-          curl -fsS "$url/healthz"; echo
-          mkdir -p srv && echo "$url" > srv/url.txt
+          mkdir -p "$RUNNER_TEMP/cibench" && cp -a _cibench/scripts "$RUNNER_TEMP/cibench/" && rm -rf _cibench
+          echo "before set-up: node=$(command -v node) $(node --version 2>/dev/null); pnpm=$(command -v pnpm || echo none); yarn=$(command -v yarn || echo none) $(yarn --version 2>/dev/null); bun=$(command -v bun || echo none); corepack=$(command -v corepack || echo none)"
+          git clone -q --filter=blob:none "https://github.com/$REPO" .
+          start=$(git rev-list --first-parent -n $((DROPIN_COMMITS + 1)) "$DROPIN_SHA" | tail -1)
+          git checkout -q "$start"
+          echo "window start ${start:0:9}"
+
+      # ---- the repository's own set-up, as its CI job has it ----
+      - name: corepack enable (before setup-node, as the repo's CI)
+        if: matrix.corepack_first
+        run: corepack enable
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+        if: matrix.pnpm
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.bun
+        with:
+          bun-version-file: ${{ matrix.bun_file }}
+      - uses: actions/setup-node@v6
+        if: matrix.node != '' || matrix.node_file != ''
+        with:
+          node-version: ${{ matrix.node }}
+          node-version-file: ${{ matrix.node_file }}
+      - name: corepack enable
+        if: matrix.corepack
+        run: corepack enable
+
+      # ---- the one line a customer adds (cloud off: the bench hands the ledger over locally) ----
+      - uses: pango07/quod-action@0d639e9a85fde5f27f06d44811332a6f0fb6fe1e # v1
+        with:
+          cloud: 'false'
+
+      - name: drop-in bench (${{ matrix.commits }} commits)
+        run: bash "$RUNNER_TEMP/cibench/scripts/dropin/run.sh"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
         with:
-          name: server
-          path: srv
-      - name: serve until the seed and case jobs are done
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for _ in $(seq 1 420); do
-            left=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" --paginate \
-              --jq '[.jobs[] | select(.name != "server" and .name != "report" and .status != "completed")] | length' | paste -sd+ | bc)
-            [ "$left" = 0 ] && break
-            sleep 10
-          done
-          grep -c 'task-cache artifact stored' "$RUNNER_TEMP/server.log" || true
-      - if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: server-log
-          path: ${{ runner.temp }}/server.log
+          name: dropin-${{ matrix.id }}
+          path: |
+            ${{ runner.temp }}/dropin/row.json
+            ${{ runner.temp }}/dropin/report.md
+            ${{ runner.temp }}/dropin/ci.md
+            ${{ runner.temp }}/dropin/metrics.json
+            ${{ runner.temp }}/dropin/results.jsonl
+            ${{ runner.temp }}/dropin/logs
+          if-no-files-found: ignore
 
-  seed:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      id-token: write
-      actions: read
-    steps:
-      - name: 'bench: fixture (base)'
-        run: |
-          set -euo pipefail
-          git clone -q --depth 1 --filter=blob:none --sparse "https://github.com/$GITHUB_REPOSITORY" "$RUNNER_TEMP/b"
-          git -C "$RUNNER_TEMP/b" sparse-checkout set scripts/floor
-          node "$RUNNER_TEMP/b/scripts/floor/gen.mjs" . --scale "${{ inputs.scale }}"
-          echo "# bench run ${{ github.run_id }}" > .npmrc
-          git init -q -b main && git add -A && git -c user.email=b@example.com -c user.name=b commit -qm base
-      - id: srv
-        name: 'bench: the server'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for _ in $(seq 1 60); do
-            gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n server -D "$RUNNER_TEMP/srv" 2>/dev/null && break
-            sleep 5
-          done
-          echo "url=$(cat "$RUNNER_TEMP/srv/url.txt")" >> "$GITHUB_OUTPUT"
-      - name: 'ci: setup-node'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node }}
-          cache: npm
-      - name: 'ci: quod'
-        uses: pango07/quod-action@ea7aba32056e8e71c9cb75e3de78dc2017f56a20
-        with:
-          server: ${{ steps.srv.outputs.url }}
-      - name: 'ci: install'
-        run: npm ci
-      - name: 'ci: typecheck'
-        run: npx turbo run typecheck
-
-  # The customer's job as it is.
-  plain:
-    name: plain ${{ matrix.case }}
-    needs: seed
-    strategy:
-      fail-fast: false
-      matrix:
-        case: [source, docs, lock, typeerror]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - name: 'bench: fixture (base, then this case''s commit)'
-        run: |
-          set -euo pipefail
-          git clone -q --depth 1 --filter=blob:none --sparse "https://github.com/$GITHUB_REPOSITORY" "$RUNNER_TEMP/b"
-          git -C "$RUNNER_TEMP/b" sparse-checkout set scripts/floor
-          node "$RUNNER_TEMP/b/scripts/floor/gen.mjs" . --scale "${{ inputs.scale }}"
-          echo "# bench run ${{ github.run_id }}" > .npmrc
-          git init -q -b main && git add -A && git -c user.email=b@example.com -c user.name=b commit -qm base
-          node "$RUNNER_TEMP/b/scripts/floor/gen.mjs" . --scale "${{ inputs.scale }}" --variant "${{ matrix.case }}"
-          git add -A && git -c user.email=b@example.com -c user.name=b commit -qm "${{ matrix.case }}" && git show --stat HEAD | tail -5
-      - name: 'ci: setup-node'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node }}
-          cache: npm
-      - name: 'ci: install'
-        run: npm ci
-      - name: 'ci: typecheck'
-        run: npx turbo run typecheck
-
-  # The same job plus the Quod line.
-  quod:
-    name: quod ${{ matrix.case }}
-    needs: seed
-    strategy:
-      fail-fast: false
-      matrix:
-        case: [source, docs, lock, typeerror]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      id-token: write
-      actions: read
-    steps:
-      - name: 'bench: fixture (base, then this case''s commit)'
-        run: |
-          set -euo pipefail
-          git clone -q --depth 1 --filter=blob:none --sparse "https://github.com/$GITHUB_REPOSITORY" "$RUNNER_TEMP/b"
-          git -C "$RUNNER_TEMP/b" sparse-checkout set scripts/floor
-          node "$RUNNER_TEMP/b/scripts/floor/gen.mjs" . --scale "${{ inputs.scale }}"
-          echo "# bench run ${{ github.run_id }}" > .npmrc
-          git init -q -b main && git add -A && git -c user.email=b@example.com -c user.name=b commit -qm base
-          node "$RUNNER_TEMP/b/scripts/floor/gen.mjs" . --scale "${{ inputs.scale }}" --variant "${{ matrix.case }}"
-          git add -A && git -c user.email=b@example.com -c user.name=b commit -qm "${{ matrix.case }}" && git show --stat HEAD | tail -5
-      - id: srv
-        name: 'bench: the server'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n server -D "$RUNNER_TEMP/srv"
-          echo "url=$(cat "$RUNNER_TEMP/srv/url.txt")" >> "$GITHUB_OUTPUT"
-      - name: 'ci: setup-node'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node }}
-          cache: npm
-      - name: 'ci: quod'
-        uses: pango07/quod-action@ea7aba32056e8e71c9cb75e3de78dc2017f56a20
-        with:
-          server: ${{ steps.srv.outputs.url }}
-      - name: 'ci: install'
-        run: npm ci
-      - name: 'ci: typecheck'
-        run: npx turbo run typecheck
-
-  report:
-    needs: [seed, plain, quod]
+  scoreboard:
+    needs: bench
     if: always()
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
     steps:
-      - name: table
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          git clone -q --depth 1 --filter=blob:none --sparse "https://github.com/$GITHUB_REPOSITORY" b
-          git -C b sparse-checkout set scripts/dropin
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" --paginate --jq '.jobs[]' | jq -s . > jobs.json
-          mkdir -p logs
-          for id in $(jq -r '.[] | select(.name != "report" and .name != "server") | .id' jobs.json); do
-            gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" > "logs/$id.log" || true
-          done
-          node b/scripts/dropin/report.mjs jobs.json logs | tee -a "$GITHUB_STEP_SUMMARY"
-      - if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: dropin-report
-          path: |
-            jobs.json
-            rows.json
+          pattern: dropin-*
+          path: ${{ runner.temp }}/rows
+      - run: |
+          mkdir -p "$RUNNER_TEMP/sb"
+          node scripts/dropin/scoreboard.mjs "$RUNNER_TEMP/rows" "$RUNNER_TEMP/sb" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scoreboard
+          path: ${{ runner.temp }}/sb
