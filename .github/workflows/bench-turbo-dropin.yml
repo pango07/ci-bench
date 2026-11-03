@@ -133,7 +133,7 @@ jobs:
           node-version: ${{ inputs.node }}
           cache: npm
       - name: 'ci: quod'
-        uses: pango07/quod-action@5dc0f7917d63bc1c6ae0f210421a0a6f09923e2d
+        uses: pango07/quod-action@58bc0d99b0554f552ad262f03d5a0c4bc674a1fc
         with:
           server: ${{ steps.srv.outputs.url }}
       - name: 'ci: install'
@@ -212,7 +212,7 @@ jobs:
           node-version: ${{ inputs.node }}
           cache: npm
       - name: 'ci: quod'
-        uses: pango07/quod-action@5dc0f7917d63bc1c6ae0f210421a0a6f09923e2d
+        uses: pango07/quod-action@58bc0d99b0554f552ad262f03d5a0c4bc674a1fc
         with:
           server: ${{ steps.srv.outputs.url }}
       - name: 'ci: install'
