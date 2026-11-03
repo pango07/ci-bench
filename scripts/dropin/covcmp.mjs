@@ -81,6 +81,14 @@ for (const f of [...new Set([...ls(pd), ...ls(cd)])]) {
         const only = ka.filter((k) => !(k in B)).concat(kb.filter((k) => !(k in A)))
         const changed = ka.filter((k) => k in B && JSON.stringify(A[k]) !== JSON.stringify(B[k]))
         why = `${only.length} files in one only, ${changed.length} differ (e.g. ${(only[0] ?? changed[0] ?? '').slice(-60)})`
+        // which counters: statements, functions, branches (istanbul's s, f, b)
+        const k = changed[0]
+        if (k && A[k]?.s) {
+          const d = ['s', 'f', 'b'].map((c) => [c, Object.keys(A[k][c] ?? {}).filter((i) => JSON.stringify(A[k][c][i]) !== JSON.stringify(B[k]?.[c]?.[i]))]).filter(([, l]) => l.length)
+          const covered = (x) => (Array.isArray(x) ? x.map((y) => +(y > 0)).join('') : +(x > 0))
+          const hitOnly = d.every(([c, l]) => l.every((i) => covered(A[k][c][i]) === covered(B[k]?.[c]?.[i])))
+          why += `; counters ${d.map(([c, l]) => `${c}:${l.length} (e.g. ${c}[${l[0]}] plain ${JSON.stringify(A[k][c][l[0]])} quod ${JSON.stringify(B[k]?.[c]?.[l[0]])})`).join(', ')}${hitOnly ? '; hit counts only, covered/uncovered the same' : '; covered/uncovered differs'}`
+        }
         if (A.total && B.total) why += `; total plain ${JSON.stringify(A.total.lines)} quod ${JSON.stringify(B.total.lines)}`
       } catch {}
     }

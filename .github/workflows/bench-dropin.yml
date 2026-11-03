@@ -134,6 +134,7 @@ jobs:
             ${{ runner.temp }}/dropin/results.jsonl
             ${{ runner.temp }}/dropin/pr.txt
             ${{ runner.temp }}/dropin/logs
+            ${{ runner.temp }}/dropin/cov
           if-no-files-found: ignore
 
   scoreboard:
