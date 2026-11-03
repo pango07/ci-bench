@@ -9,9 +9,18 @@
   const argv = process.argv
   if (process.env.QUOD_SHIM_ACTIVE === '1') return
   const bin = argv[1]
-  if (!bin || !/vitest(\.m?js)?$/.test(bin)) return
   const fs = require('node:fs')
   const path = require('node:path')
+  // Yarn runs scripts with its own `node` wrapper (its process.execPath):
+  // the shim instead, as quod-action's hook does, so the plain run's vitest
+  // gets this reporter too (the hook is not loaded in plain runs).
+  if (bin && /yarn/.test(bin)) {
+    try {
+      if (/^yarn(pkg)?(-[^/]*)?\.c?js$/.test(path.basename(fs.realpathSync(bin)))) process.execPath = path.join(__dirname, '..', 'bin', 'node')
+    } catch {}
+    return
+  }
+  if (!bin || !/vitest(\.m?js)?$/.test(bin)) return
   let entry
   try {
     entry = fs.realpathSync(bin)

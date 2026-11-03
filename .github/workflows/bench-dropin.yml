@@ -28,6 +28,12 @@ on:
         default: witness
         type: choice
         options: [witness, shadow]
+      quod_bin:
+        description: The quod the action installs (a bin-<sha> release of this repo)
+        required: true
+      quod_sha256:
+        description: SHA-256 of that release's quod-linux-x86_64.tar.gz
+        required: true
       witness_bin:
         description: The second-witness quod (a bin-<sha> release of this repo) for mode witness
         required: false
@@ -99,9 +105,11 @@ jobs:
         run: corepack enable
 
       # ---- the one line a customer adds (cloud off: the bench hands the ledger over locally) ----
-      - uses: pango07/quod-action@0d639e9a85fde5f27f06d44811332a6f0fb6fe1e # v1
+      - uses: pango07/quod-action@2648b59bf9e87fc66b8c5e064ef80f5bf6585e17 # fix/yarn-vitest3
         with:
           cloud: 'false'
+          version: ${{ inputs.quod_bin }}
+          sha256: ${{ inputs.quod_sha256 }}
 
       - name: second-witness quod (mode witness)
         if: inputs.mode == 'witness'
