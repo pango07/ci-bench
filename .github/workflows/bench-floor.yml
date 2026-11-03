@@ -1,0 +1,248 @@
+# The floor: install and typecheck of a Next.js + Convex monorepo (npm
+# workspaces, turbo, tsc per package; scripts/floor/gen.mjs), per kind of
+# commit, three ways:
+#   plain  setup-node's npm cache, `npm ci`, every package's tsc
+#   pr276  class-management PR #276: node_modules from actions/cache keyed on
+#          the lockfile, every package.json, .npmrc, node, OS and arch (a miss
+#          installs and saves), turbo's cache restored by prefix
+#   quod   pr276 plus each package's .tsbuildinfo (tsc --incremental),
+#          restored by prefix: a package turbo misses re-checks only what
+#          changed
+# A seed job per cached strategy is the previous CI run (the base commit):
+# it saves what the case jobs restore. Every case job is a fresh runner on
+# the base plus one commit: source, docs, lock (convex bumped), typeerror
+# (a shared type change breaks two pages that did not change).
+#
+#   gh workflow run bench-floor.yml -R pango07/ci-bench
+#   gh workflow run bench-floor.yml -R pango07/ci-bench -f scale=1.5 -f reps='[1,2]'
+name: bench-floor
+
+on:
+  workflow_dispatch:
+    inputs:
+      scale:
+        description: Fixture size (1 = 150 models, 40 tables, 150 function modules, 250 pages)
+        required: false
+        default: '1'
+      reps:
+        description: Repetitions (a JSON list)
+        required: false
+        default: '[1]'
+      node:
+        description: Node.js version
+        required: false
+        default: 24.22.2
+
+permissions:
+  contents: read
+
+env:
+  FX: fx
+  TURBO_TELEMETRY_DISABLED: '1'
+  TURBO_NO_UPDATE_NOTIFIER: '1'
+  DO_NOT_TRACK: '1'
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  seed:
+    name: seed ${{ matrix.strategy }}
+    strategy:
+      fail-fast: false
+      matrix:
+        strategy: [pr276, quod]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      STRATEGY: ${{ matrix.strategy }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: fixture (base)
+        run: |
+          node scripts/floor/gen.mjs "$FX" --scale "${{ inputs.scale }}" $([ "$STRATEGY" = quod ] && echo --incremental)
+          cd "$FX" && git init -q -b main && git add -A && git -c user.email=b@example.com -c user.name=b commit -qm base
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node }}
+          cache: npm
+          cache-dependency-path: fx/package-lock.json
+      - id: key
+        run: echo "nm=nm-$STRATEGY-${{ github.run_id }}-$(bash scripts/floor/nm-key.sh "$FX")" >> "$GITHUB_OUTPUT"
+      - name: install
+        run: cd "$FX" && npm ci --no-audit --no-fund --loglevel=error && du -sh node_modules
+      - uses: actions/cache/save@v4
+        with:
+          path: |
+            fx/node_modules
+            fx/apps/*/node_modules
+            fx/packages/*/node_modules
+          key: ${{ steps.key.outputs.nm }}
+      - name: typecheck (full, the base commit's run)
+        run: set -o pipefail; cd "$FX" && npx turbo run typecheck 2>&1 | tail -40
+      - uses: actions/cache/save@v4
+        with:
+          path: fx/.turbo/cache
+          key: turbo-${{ matrix.strategy }}-${{ github.run_id }}-seed
+      - if: matrix.strategy == 'quod'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            fx/apps/*/.tsbuildinfo
+            fx/packages/*/.tsbuildinfo
+          key: tsbi-${{ github.run_id }}-seed
+
+  case:
+    name: ${{ matrix.strategy }} ${{ matrix.case }} ${{ matrix.rep }}
+    needs: seed
+    strategy:
+      fail-fast: false
+      matrix:
+        strategy: [plain, pr276, quod]
+        case: [source, docs, lock, typeerror]
+        rep: ${{ fromJSON(inputs.reps) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      STRATEGY: ${{ matrix.strategy }}
+      CASE: ${{ matrix.case }}
+      REP: ${{ matrix.rep }}
+      JOB_NAME: ${{ matrix.strategy }} ${{ matrix.case }} ${{ matrix.rep }}
+    steps:
+      - name: start
+        run: read -r up _ </proc/uptime; echo "start $(( 10#${up/./} * 10 ))" > "$RUNNER_TEMP/stamps"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: fixture (base, then this case's commit)
+        run: |
+          inc=$([ "$STRATEGY" = quod ] && echo --incremental || true)
+          node scripts/floor/gen.mjs "$FX" --scale "${{ inputs.scale }}" $inc
+          cd "$FX" && git init -q -b main && git add -A && git -c user.email=b@example.com -c user.name=b commit -qm base
+          cd .. && node scripts/floor/gen.mjs "$FX" --scale "${{ inputs.scale }}" $inc --variant "$CASE"
+          cd "$FX" && git add -A && git -c user.email=b@example.com -c user.name=b commit -qm "$CASE" && git show --stat HEAD | tail -8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node }}
+          cache: npm
+          cache-dependency-path: fx/package-lock.json
+      - run: bash scripts/floor/stamp.sh setup
+      - id: key
+        if: matrix.strategy != 'plain'
+        run: echo "nm=nm-$STRATEGY-${{ github.run_id }}-$(bash scripts/floor/nm-key.sh "$FX")" >> "$GITHUB_OUTPUT"
+      - id: nm
+        if: matrix.strategy != 'plain'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            fx/node_modules
+            fx/apps/*/node_modules
+            fx/packages/*/node_modules
+          key: ${{ steps.key.outputs.nm }}
+      - run: bash scripts/floor/stamp.sh nm_restored
+      - name: install
+        if: matrix.strategy == 'plain' || steps.nm.outputs.cache-hit != 'true'
+        run: cd "$FX" && npm ci --no-audit --no-fund --loglevel=error
+      - run: bash scripts/floor/stamp.sh installed
+      - if: matrix.strategy != 'plain' && steps.nm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            fx/node_modules
+            fx/apps/*/node_modules
+            fx/packages/*/node_modules
+          key: ${{ steps.nm.outputs.cache-primary-key }}
+      - run: bash scripts/floor/stamp.sh nm_saved
+      # The case jobs restore the seed's (the previous run's) caches and save
+      # under their own keys, which no other case job's restore-keys match.
+      - id: tc
+        if: matrix.strategy != 'plain'
+        uses: actions/cache/restore@v4
+        with:
+          path: fx/.turbo/cache
+          key: turbo-${{ matrix.strategy }}-${{ github.run_id }}-case-${{ matrix.case }}-${{ matrix.rep }}
+          restore-keys: turbo-${{ matrix.strategy }}-${{ github.run_id }}-seed
+      - id: tsbi
+        if: matrix.strategy == 'quod'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            fx/apps/*/.tsbuildinfo
+            fx/packages/*/.tsbuildinfo
+          key: tsbi-${{ github.run_id }}-case-${{ matrix.case }}-${{ matrix.rep }}
+          restore-keys: tsbi-${{ github.run_id }}-seed
+      - run: bash scripts/floor/stamp.sh tc_restored
+      - name: typecheck
+        id: typecheck
+        run: |
+          cd "$FX"
+          set +e
+          npx turbo run typecheck > typecheck.log 2>&1
+          rc=$?
+          bash ../scripts/floor/stamp.sh typechecked
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          grep -E 'error TS|Tasks:|Cached:|Time:|cache (hit|miss)' typecheck.log | head -30
+      - if: matrix.strategy != 'plain'
+        uses: actions/cache/save@v4
+        with:
+          path: fx/.turbo/cache
+          key: turbo-${{ matrix.strategy }}-${{ github.run_id }}-case-${{ matrix.case }}-${{ matrix.rep }}
+      - if: matrix.strategy == 'quod'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            fx/apps/*/.tsbuildinfo
+            fx/packages/*/.tsbuildinfo
+          key: tsbi-${{ github.run_id }}-case-${{ matrix.case }}-${{ matrix.rep }}
+      - run: bash scripts/floor/stamp.sh saved
+      - name: row
+        env:
+          NM_HIT: ${{ steps.nm.outputs.cache-hit }}
+          TC_HIT: ${{ steps.tc.outputs.cache-matched-key }}
+          TSBI_HIT: ${{ steps.tsbi.outputs.cache-matched-key }}
+          TC_RC: ${{ steps.typecheck.outputs.rc }}
+        run: cd "$FX" && mkdir -p "$RUNNER_TEMP/row" && node ../scripts/floor/row.mjs "$RUNNER_TEMP/row/$STRATEGY-$CASE-$REP.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: row-${{ matrix.strategy }}-${{ matrix.case }}-${{ matrix.rep }}
+          path: |
+            ${{ runner.temp }}/row
+            fx/typecheck.log
+      - name: correctness
+        env:
+          NM_HIT: ${{ steps.nm.outputs.cache-hit }}
+          TC_RC: ${{ steps.typecheck.outputs.rc }}
+        run: |
+          ok=1
+          if [ "$CASE" = typeerror ]; then
+            [ "$TC_RC" != 0 ] && grep -q 'error TS' "$FX/typecheck.log" && echo "typeerror: typecheck failed, as it must" || { echo "::error::typeerror: the typecheck passed"; ok=0; }
+          else
+            [ "$TC_RC" = 0 ] || { echo "::error::$CASE: the typecheck failed"; ok=0; }
+          fi
+          if [ "$CASE" = lock ] && [ "$STRATEGY" != plain ]; then
+            [ "$NM_HIT" != true ] && echo "lock: the node_modules key missed, as it must" || { echo "::error::lock: node_modules hit after a dependency change"; ok=0; }
+          fi
+          [ $ok = 1 ]
+
+  report:
+    needs: case
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: row-*
+          path: rows
+      - name: table
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" --jq '.jobs' > jobs.json
+          node scripts/floor/report.mjs rows jobs.json | tee -a "$GITHUB_STEP_SUMMARY"
+          jq -r '.[] | "\(.name)\t\(.started_at)\t\(.completed_at)"' jobs.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: floor-report
+          path: |
+            rows.json
+            jobs.json
