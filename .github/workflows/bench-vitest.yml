@@ -59,6 +59,11 @@ on:
         required: false
         default: 4 9 14 19
 
+      extra_env:
+        description: "Extra environment for the bench scripts (space-separated K=V)"
+        required: false
+        default: ''
+
 permissions:
   contents: read
 
@@ -82,7 +87,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: host (FUSE, bubblewrap, /work, node)
-        run: bash scripts/host-setup.sh
+        env:
+          EXTRA_ENV: ${{ inputs.extra_env }}
+        run: |
+          bash scripts/host-setup.sh
+          for kv in $EXTRA_ENV; do echo "$kv" >> "$GITHUB_ENV"; done
       - name: runner binary (release ${{ inputs.bin }})
         env:
           GH_TOKEN: ${{ github.token }}
