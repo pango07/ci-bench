@@ -1,0 +1,132 @@
+# Drop-in compatibility: Quod added to real open-source CI test jobs the way a
+# customer adds it (the action line + `permissions: id-token: write`), one
+# matrix job per repository (scripts/dropin/corpus.json). Each job sets up
+# the project as its CI does (pnpm / bun / corepack / setup-node, their
+# install, their build), runs pango07/quod-action (mode check), then replays
+# N consecutive commits: plain, check and shadow per commit, compared per
+# file and per test (scripts/dropin/run.sh). The scoreboard job collects
+# every row (scoreboard.json and the job summary).
+#
+#   gh workflow run bench-dropin.yml -R pango07/ci-bench
+#   gh workflow run bench-dropin.yml -R pango07/ci-bench -f only=axios,yup -f commits=3
+name: bench-dropin
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: Comma-separated corpus ids (empty = all)
+        required: false
+        default: ''
+      commits:
+        description: Commits per repository (a corpus entry may cap it lower)
+        required: false
+        default: '12'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  corpus:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: m
+        env:
+          ONLY: ${{ inputs.only }}
+          DROPIN_COMMITS: ${{ inputs.commits }}
+        run: echo "matrix=$(node scripts/dropin/matrix.mjs "$ONLY" "$DROPIN_COMMITS")" >> "$GITHUB_OUTPUT"
+
+  bench:
+    needs: corpus
+    name: ${{ matrix.id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.corpus.outputs.matrix) }}
+    env:
+      DROPIN_SHA: ${{ matrix.sha }}
+      DROPIN_COMMITS: ${{ matrix.commits }}
+      DROPIN_INSTALL: ${{ matrix.install }}
+      DROPIN_BUILD: ${{ matrix.build }}
+      DROPIN_TEST: ${{ matrix.test }}
+      DROPIN_WORKDIR: ${{ matrix.workdir }}
+      DROPIN_EXTRA_ENV: ${{ matrix.env }}
+      DROPIN_META: ${{ matrix.meta }}
+    steps:
+      # The bench's scripts go to the runner's temp; the workspace becomes the project.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: _cibench
+      - name: bench scripts, the project checkout, runner tools before set-up
+        env:
+          REPO: ${{ matrix.repo }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/cibench" && cp -a _cibench/scripts "$RUNNER_TEMP/cibench/" && rm -rf _cibench
+          echo "before set-up: node=$(command -v node) $(node --version 2>/dev/null); pnpm=$(command -v pnpm || echo none); yarn=$(command -v yarn || echo none) $(yarn --version 2>/dev/null); bun=$(command -v bun || echo none); corepack=$(command -v corepack || echo none)"
+          git clone -q --filter=blob:none "https://github.com/$REPO" .
+          start=$(git rev-list --first-parent -n $((DROPIN_COMMITS + 1)) "$DROPIN_SHA" | tail -1)
+          git checkout -q "$start"
+          echo "window start ${start:0:9}"
+
+      # ---- the repository's own set-up, as its CI job has it ----
+      - name: corepack enable (before setup-node, as the repo's CI)
+        if: matrix.corepack_first
+        run: corepack enable
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+        if: matrix.pnpm
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.bun
+        with:
+          bun-version-file: ${{ matrix.bun_file }}
+      - uses: actions/setup-node@v6
+        if: matrix.node != '' || matrix.node_file != ''
+        with:
+          node-version: ${{ matrix.node }}
+          node-version-file: ${{ matrix.node_file }}
+      - name: corepack enable
+        if: matrix.corepack
+        run: corepack enable
+
+      # ---- the one line a customer adds (cloud off: the bench hands the ledger over locally) ----
+      - uses: pango07/quod-action@0d639e9a85fde5f27f06d44811332a6f0fb6fe1e # v1
+        with:
+          cloud: 'false'
+
+      - name: drop-in bench (${{ matrix.commits }} commits)
+        run: bash "$RUNNER_TEMP/cibench/scripts/dropin/run.sh"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: dropin-${{ matrix.id }}
+          path: |
+            ${{ runner.temp }}/dropin/row.json
+            ${{ runner.temp }}/dropin/report.md
+            ${{ runner.temp }}/dropin/ci.md
+            ${{ runner.temp }}/dropin/metrics.json
+            ${{ runner.temp }}/dropin/results.jsonl
+            ${{ runner.temp }}/dropin/logs
+          if-no-files-found: ignore
+
+  scoreboard:
+    needs: bench
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: dropin-*
+          path: ${{ runner.temp }}/rows
+      - run: |
+          mkdir -p "$RUNNER_TEMP/sb"
+          node scripts/dropin/scoreboard.mjs "$RUNNER_TEMP/rows" "$RUNNER_TEMP/sb" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scoreboard
+          path: ${{ runner.temp }}/sb

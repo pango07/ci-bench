@@ -1,0 +1,122 @@
+[
+  {
+    "id": "axios", "repo": "axios/axios", "sha": "fb88a1b133c1a2d774713070b8ca25f7bcd382ac",
+    "shape": "npm, single package, node library (vitest 4.1, projects: unit)",
+    "why": "npm + package-lock; vitest projects selected with --project; a build step before tests",
+    "node": "26.x", "install": "npm ci --ignore-scripts", "build": "npm run build",
+    "test": "npm run test:vitest:unit",
+    "shadow_with": "install: npm ci --ignore-scripts; test: npm run build && npm run test:vitest:unit; node-version: 26.x (cache npm is the default)"
+  },
+  {
+    "id": "convex-helpers", "repo": "get-convex/convex-helpers", "sha": "5eaa7e5160736054d53f8b71e2c522835eb427e0",
+    "shape": "npm, single package, Convex app + library (convex-test, import.meta.glob; vitest 5.0)",
+    "why": "the Convex shape (convex-test with import.meta.glob) and vitest 5",
+    "node_file": ".nvmrc", "install": "npm ci", "build": "npm run build",
+    "test": "npm run test",
+    "shadow_with": "test: npm run build && npm run test; node-version: 24.18.0 (no node-version-file input)"
+  },
+  {
+    "id": "t3-env", "repo": "t3-oss/t3-env", "sha": "7d26a645904a8fa8712c16f31a4737a80e7066fd",
+    "shape": "bun, workspaces monorepo (turbo build), env-validation library (vitest 4.0)",
+    "why": "bun install + bun run; turbo for the build; `vitest` without `run` (relies on CI)",
+    "node_file": "package.json", "bun": true, "bun_file": "package.json",
+    "install": "bun install", "build": "bun run build --filter=@t3-oss/env*",
+    "test": "bun run test",
+    "shadow_with": "not expressible: shadow.yml has no setup-bun step (install: bun install fails without bun on the runner)"
+  },
+  {
+    "id": "resolvers", "repo": "react-hook-form/resolvers", "sha": "bdc8005a9e70ab16e38631b882fe6233711ecabe",
+    "shape": "bun (no setup-node), single package, React form resolvers (vitest 3.2, jsdom)",
+    "why": "bun-only CI (node comes from the runner image), vitest 3",
+    "bun": true, "install": "bun install", "build": "",
+    "test": "bun run test",
+    "shadow_with": "not expressible: shadow.yml has no setup-bun step"
+  },
+  {
+    "id": "immer", "repo": "immerjs/immer", "sha": "75a290e44ba14bd723c8ef8546b6559c8ef3ae88",
+    "shape": "yarn classic, single package, node library (vitest 3.2; second config for the build; coverage step)",
+    "why": "yarn 1 + yarn.lock; vitest run twice per test script (src and build configs); a coverage step",
+    "node": "24", "install": "yarn --frozen-lockfile", "build": "",
+    "test": "yarn test && yarn coverage",
+    "shadow_with": "install: yarn --frozen-lockfile; cache: yarn; test: yarn test && yarn coverage"
+  },
+  {
+    "id": "yup", "repo": "jquense/yup", "sha": "ff31eee8a2b10c938bb3a22544d9e33957a8cf01",
+    "shape": "yarn berry (node-modules linker), single package, validation library (vitest 3.2, projects sync/async)",
+    "why": "yarn 4 through corepack; the test script chains lint and vitest",
+    "node": "24", "corepack": true, "install": "yarn install --frozen-lockfile", "build": "",
+    "test": "yarn test",
+    "shadow_with": "install: corepack enable && yarn install --frozen-lockfile; cache: '' (setup-node's yarn cache needs corepack first)"
+  },
+  {
+    "id": "outline", "repo": "outline/outline", "sha": "eff1a43d9b18ff6571b8f444c0d77a7571cd7595",
+    "shape": "yarn berry, large app (React frontend), vitest projects (app), TZ and env in the script (vitest 4.1, jsdom)",
+    "why": "a real product app; yarn 4; `TZ=UTC vitest run --project app`; job-level env (NODE_ENV, NODE_OPTIONS, secrets)",
+    "corepack_first": true, "node_file": "package.json", "install": "yarn install --immutable", "build": "",
+    "test": "yarn test:app",
+    "env": "NODE_ENV=test DATABASE_URL=postgres://postgres:password@localhost:5432/outline_test REDIS_URL=redis://127.0.0.1:6379 URL=http://localhost:3000 NODE_OPTIONS=--max-old-space-size=8192 SECRET_KEY=F0E5AD933D7F6FD8F4DBB3E038C501C052DC0593C686D21ACB30AE205D2F634B UTILS_SECRET=123456 SLACK_VERIFICATION_TOKEN=123456 SMTP_USERNAME=localhost",
+    "commits": 8,
+    "shadow_with": "not expressible as-is: corepack must run before setup-node; the workflow-level env must be repeated (no env input)"
+  },
+  {
+    "id": "pinia", "repo": "vuejs/pinia", "sha": "19821839c792d788b483cf7f41bb98190a51c402",
+    "shape": "pnpm workspaces, Vue (happy-dom), vitest 4.1 with --coverage in the CI script",
+    "why": "Vue library; the CI test step is `vitest --coverage`",
+    "pnpm": true, "node": "24", "install": "pnpm install --frozen-lockfile", "build": "pnpm run -r dev:prepare",
+    "test": "pnpm run test:vitest",
+    "shadow_with": "not expressible: shadow.yml has no pnpm setup step (pnpm is not on the runner; setup-node cache: pnpm fails without it)"
+  },
+  {
+    "id": "reselect", "repo": "reduxjs/reselect", "sha": "8911ef76eece985ba425c3234ac0bdc903b9b0e5",
+    "shape": "pnpm, single package, memoization library (vitest 4.1); CI writes the git sha into package.json before tests",
+    "why": "a per-commit edit to package.json's version before the test step",
+    "pnpm": true, "node": "24.x", "install": "pnpm install --frozen-lockfile",
+    "build": "node scripts/writeGitVersion.mjs $(git rev-parse --short HEAD)",
+    "test": "pnpm test",
+    "shadow_with": "not expressible: no pnpm setup step in shadow.yml"
+  },
+  {
+    "id": "tanstack-store", "repo": "TanStack/store", "sha": "53f30be1e43c8d7899ace08023705b34f5e533f8",
+    "shape": "pnpm + nx run-many, monorepo (React/Vue/Solid/Svelte/Angular adapters), vitest 4.1 per package",
+    "why": "nx task runner; `vitest` (no run) per package through nx; real CI distributes with Nx Agents (bench: NX_NO_CLOUD)",
+    "pnpm": true, "node_file": ".nvmrc", "install": "pnpm install --frozen-lockfile", "build": "",
+    "test": "pnpm run test:ci",
+    "env": "NX_NO_CLOUD=true NX_SKIP_NX_CACHE=true NX_DAEMON=false",
+    "commits": 10,
+    "shadow_with": "not expressible: no pnpm setup step; the real PR job runs tests on Nx Cloud agents, never on the runner Quod is on"
+  },
+  {
+    "id": "vercel-ai", "repo": "vercel/ai", "sha": "add01abd2c6e1ab5462bc2a97263f96c8b6abf52",
+    "shape": "pnpm + turbo, large monorepo (~50 packages, node + edge configs), vitest 4.1",
+    "why": "turbo test across many packages, a build of all packages first",
+    "pnpm": true, "node": "24", "install": "pnpm install --frozen-lockfile", "build": "pnpm run build:packages",
+    "test": "pnpm test:ci",
+    "env": "TURBO_FORCE=true TURBO_TELEMETRY_DISABLED=1",
+    "commits": 8,
+    "shadow_with": "not expressible: no pnpm setup step; the build (turbo, remote-cached in their CI) must be prepended to test"
+  },
+  {
+    "id": "zustand", "repo": "pmndrs/zustand", "sha": "382d29c485e67018c06e75ec7235130d0968522c",
+    "shape": "pnpm, single package, React state library (jsdom), vitest 5.0",
+    "why": "React + jsdom; vitest 5",
+    "pnpm": true, "node": "24", "install": "pnpm install", "build": "",
+    "test": "pnpm run test:spec",
+    "shadow_with": "not expressible: no pnpm setup step"
+  },
+  {
+    "id": "shiki", "repo": "shikijs/shiki", "sha": "de15fd2efb709ea4528d894ab857ac145f3dc277",
+    "shape": "pnpm + turbo build, monorepo, snapshot-heavy (file snapshots), vitest 5.0 with --coverage",
+    "why": "snapshot-heavy suite; ni/nr wrappers; coverage on the CI test step",
+    "pnpm": true, "node": "24.x", "install": "npm i -g @antfu/ni && nci", "build": "nr build",
+    "test": "nr test --coverage",
+    "shadow_with": "not expressible: no pnpm setup step"
+  },
+  {
+    "id": "mcp-sdk", "repo": "modelcontextprotocol/typescript-sdk", "sha": "1e608caeb5130b2ad0fa067c84b26a038c1c6e36",
+    "shape": "pnpm -r workspaces, node SDK (servers/clients, http), vitest 4 workspace per package",
+    "why": "pnpm -r across packages (no task runner); tests open local HTTP servers",
+    "pnpm": true, "node": "24", "install": "pnpm install", "build": "",
+    "test": "pnpm -r --filter '!@modelcontextprotocol/test-e2e' test",
+    "shadow_with": "not expressible: no pnpm setup step"
+  }
+]
