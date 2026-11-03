@@ -1,0 +1,139 @@
+# vitest on N consecutive first-parent commits of a real project: plain
+# vitest against the accelerated runner, interleaved per commit on one
+# runner, every commit's two JSON reports compared file by file and test by
+# test. See README.md.
+#
+#   gh workflow run bench-vitest.yml -R pango07/ci-bench                       (vuejs/core, 20 commits, inline)
+#   gh workflow run bench-vitest.yml -R pango07/ci-bench -f commits=3
+#   gh workflow run bench-vitest.yml -R pango07/ci-bench -f mode=shadow
+#   gh workflow run bench-vitest.yml -R pango07/ci-bench -f bin=bin-a074f76
+#
+# The project lives in /work (a runner's home is 0750; the observed run's
+# sandbox cannot reach it) and runs on the pinned node at /usr/local/node,
+# which both series use.
+name: bench-vitest
+
+on:
+  workflow_dispatch:
+    inputs:
+      bin:
+        description: The runner binary, a release tag of this repo (bin-<sha>), or latest
+        required: false
+        default: latest
+      mode:
+        description: "bench (inline: the N-commit benchmark), shadow (critical path vs plain, the recording job as its own column) or profile (the recorder's cost at the pinned commit)"
+        required: false
+        default: bench
+        type: choice
+        options: [bench, shadow, profile]
+      repo:
+        description: The project (owner/name on GitHub)
+        required: false
+        default: vuejs/core
+      sha:
+        description: The last commit of the window
+        required: false
+        default: 68f25a4a1957710de71731702bd42e05535f494b
+      commits:
+        description: How many first-parent commits
+        required: false
+        default: '20'
+      vitest_args:
+        description: The project's unit test command's vitest arguments
+        required: false
+        default: run --project unit*
+      lag:
+        description: "shadow mode: how many of the newest recordings have not finished when the next commit starts"
+        required: false
+        default: '0'
+      node:
+        description: Node.js version (installed at /usr/local/node)
+        required: false
+        default: 24.22.2
+      observe:
+        description: "1: the one-time observed run that backstops the recorder (needs FUSE); 0: skip it"
+        required: false
+        default: '1'
+      mutate:
+        description: Commit indexes that get a mutation check (space-separated)
+        required: false
+        default: 4 9 14 19
+
+permissions:
+  contents: read
+
+env:
+  MODE: ${{ inputs.mode }}
+  BIN: ${{ inputs.bin }}
+  REPO: ${{ inputs.repo }}
+  SHA: ${{ inputs.sha }}
+  COMMITS: ${{ inputs.commits }}
+  VITEST_ARGS: ${{ inputs.vitest_args }}
+  SHADOW_LAG: ${{ inputs.lag }}
+  NODE_VERSION: ${{ inputs.node }}
+  OBSERVE: ${{ inputs.observe }}
+  MUTATE: ${{ inputs.mutate }}
+  PROJ: /work/proj
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: host (FUSE, bubblewrap, /work, node)
+        run: bash scripts/host-setup.sh
+      - name: runner binary (release ${{ inputs.bin }})
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$BIN
+          [ "$tag" = latest ] && tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          gh release download "$tag" -R "$GITHUB_REPOSITORY" -p 'quod-linux-x86_64.tar.gz' -D "$RUNNER_TEMP"
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/quod-linux-x86_64.tar.gz"
+          "$RUNNER_TEMP/quod" --version || true
+          echo "BIN_TAG=$tag" >> "$GITHUB_ENV"
+      - name: checkout the project, pnpm, dependencies
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+        run: |
+          echo /usr/local/node/bin >> "$GITHUB_PATH"
+          export PATH=/usr/local/node/bin:$PATH
+          git clone -q --filter=blob:none "https://github.com/$REPO" "$PROJ"
+          cd "$PROJ"
+          git checkout -q "$SHA"
+          pm=$(node -p "(require('./package.json').packageManager||'pnpm@latest').split('+')[0]")
+          sudo env PATH="$PATH" npm i -g -s "$pm"
+          node --version; pnpm --version
+          pnpm install --frozen-lockfile
+      - name: summary header
+        run: |
+          {
+            echo "**${REPO}** at \`${SHA:0:9}\`, ${COMMITS} commits, mode \`${MODE}\`, binary \`${BIN_TAG}\`."
+            echo "Runner: ${RUNNER_ENVIRONMENT:-github-hosted} \`ubuntu-latest\` ($(. /etc/os-release && echo "$PRETTY_NAME"), $(nproc) CPUs, $(awk '/MemTotal/{printf "%.0f GiB", $2/1048576}' /proc/meminfo)), node $(node --version). Run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: bench (inline)
+        if: env.MODE == 'bench'
+        env:
+          QUOD: ${{ runner.temp }}/quod
+        run: bash scripts/vitest/bench.sh "$PROJ" "$SHA" "$COMMITS" $VITEST_ARGS
+      - name: shadow
+        if: env.MODE == 'shadow'
+        env:
+          QUOD: ${{ runner.temp }}/quod
+        run: bash scripts/vitest/shadow.sh "$PROJ" "$SHA" "$COMMITS" $VITEST_ARGS
+      - name: profile
+        if: env.MODE == 'profile'
+        env:
+          QUOD: ${{ runner.temp }}/quod
+        run: bash scripts/vitest/profile.sh "$PROJ" $VITEST_ARGS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: bench-vitest-${{ inputs.mode }}
+          path: |
+            ${{ runner.temp }}/bench-vitest/report.md
+            ${{ runner.temp }}/bench-vitest/*.jsonl
+            ${{ runner.temp }}/bench-vitest/logs
+          if-no-files-found: ignore
