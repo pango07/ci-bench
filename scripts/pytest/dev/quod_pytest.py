@@ -184,6 +184,12 @@ class States:
         kind, _, arg = key.partition(":")
         if kind in ("f", "m"):
             return self.content(absp(arg))
+        if kind == "et":
+            try:
+                st = _real_stat(absp(arg))
+            except OSError:
+                return "absent"
+            return "dir" if _statmod.S_ISDIR(st.st_mode) else "file" if _statmod.S_ISREG(st.st_mode) else "other"
         if kind == "e":
             try:
                 st = _real_stat(absp(arg))
@@ -204,7 +210,7 @@ class States:
                 return "absent"
             return hs("\0".join(n for n in r if n == stem or n.startswith(stem + ".")))
         if kind == "v":
-            v = os.environ.get(arg)
+            v = START.get("env", os.environ).get(arg)
             return "unset" if v is None else hs(v)
         if kind == "venv":
             return env_all()
@@ -302,7 +308,8 @@ def volatile(name):
 
 
 def env_all():
-    return hs("\0".join("%s=%s" % kv for kv in sorted(os.environ.items()) if not volatile(kv[0])))
+    env = START.get("env", os.environ)
+    return hs("\0".join("%s=%s" % kv for kv in sorted(env.items()) if not volatile(kv[0])))
 
 
 def py_state():
@@ -684,10 +691,13 @@ class Recorder:
                                     rec.cur.reads[ok] = None
                                 elif not rec._excluded(p) and p not in rec.written:
                                     mod = _caller()
-                                    if (mod.startswith("_pytest") or mod.startswith("pluggy")) and os.path.basename(p) not in _PYTEST_PROBES:
+                                    if mod.startswith("_pytest") or mod.startswith("pluggy"):
                                         # pytest finding test files and its
-                                        # outputs; it finds new ones itself.
-                                        pass
+                                        # outputs (it finds new ones itself);
+                                        # its config, conftest and package
+                                        # probes: existence and type.
+                                        if os.path.basename(p) in _PYTEST_PROBES or os.path.isdir(p):
+                                            rec.cur.reads["et:" + p] = None
                                     else:
                                         rec.cur.reads["e:" + p] = None
                         except Exception:
@@ -1594,6 +1604,7 @@ class Quod:
         self.guard_on = False
         self.tool = None
         self.thread_mark = None
+        self.reorders = None
 
     # -- configuration and selection ---------------------------------------
 
@@ -1877,6 +1888,27 @@ class Quod:
                     self.unexpected.append(r)
             if self.unexpected and any(rr.get("cleak") or rr.get("rleak") for rr in self.replay.values()):
                 self.trip("test files the pre-scan did not predict (%s) beside replayed files that leak state" % ", ".join(self.unexpected[:3]))
+        # Replays go between the files that run, by the full run's file
+        # order. A plugin or conftest that interleaves files makes that
+        # order unknowable: no replays (and a shadow records nothing).
+        last = None
+        seen = set()
+        for it in items:
+            r = rel(str(it.path))
+            if r != last:
+                if r in seen:
+                    self.reorders = "tests of %s are not contiguous after collection" % r
+                    break
+                if last is not None and self.order and self._pos(r) < self._pos(last):
+                    self.reorders = "%s runs before %s, against the file order" % (r, last)
+                    break
+                seen.add(r)
+                last = r
+        if self.reorders:
+            if REC is not None:
+                REC.S.taint("a plugin reorders tests across files (%s)" % self.reorders)
+            if self.mode == "critical" and self.replay:
+                self.trip(self.reorders)
         if self.mode == "critical" and self.replay and self.guard_on:
             self._check_collect_leaks()
         if not self.replay:
@@ -2154,7 +2186,7 @@ def window_keys(windows, names, st):
     for w in windows:
         for k in w.reads:
             kind, _, p = k.partition(":")
-            if kind in ("f", "m", "e", "l", "ini"):
+            if kind in ("f", "m", "e", "et", "l", "ini"):
                 k = kind + ":" + rel(p)
             keys[k] = None
     # Import resolution: every name tried, in each workspace directory it
@@ -2446,6 +2478,7 @@ def main():
     if args and args[0] == "--":
         args = args[1:]
     START["cwd"] = os.getcwd()
+    START["env"] = dict(os.environ)
     # As `python -m pytest`: the working directory first on sys.path.
     sys.path[0] = os.getcwd()
     START["sys_path"] = [p for p in sys.path]
