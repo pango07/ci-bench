@@ -58,6 +58,8 @@ jobs:
       DROPIN_WORKDIR: ${{ matrix.workdir }}
       DROPIN_EXTRA_ENV: ${{ matrix.env }}
       DROPIN_META: ${{ matrix.meta }}
+      DROPIN_PROBE: ${{ matrix.probe }}
+      DROPIN_PROBE_DISABLE: ${{ matrix.probe_disable }}
     steps:
       # The bench's scripts go to the runner's temp; the workspace becomes the project.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

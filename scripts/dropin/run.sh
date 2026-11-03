@@ -90,6 +90,21 @@ for i in "${!commits[@]}"; do
   s=$(ms); (bash -c "$DROPIN_INSTALL") >"$out/logs/install-$i.log" 2>&1; irc=$?; install_ms=$(( $(ms) - s ))
   s=$(ms); brc=0; [ -n "${DROPIN_BUILD:-}" ] && { (bash -c "$DROPIN_BUILD") >"$out/logs/build-$i.log" 2>&1; brc=$?; }; build_ms=$(( $(ms) - s ))
   [ $irc = 0 ] && [ $brc = 0 ] || echo "::warning::commit $i: install rc $irc, build rc $brc"
+  if (( i == 0 )); then
+    # Diagnostics, once: which node the package manager's scripts see
+    # (DROPIN_PROBE), and whether QUOD_DISABLE=1 in the job's env reaches the
+    # hook through the test command (task runners filter the environment).
+    if [ -n "${DROPIN_PROBE:-}" ]; then
+      setmode check
+      echo "probe: $DROPIN_PROBE"; (bash -c "$DROPIN_PROBE") 2>&1 | tee "$out/logs/probe.log" | head -20
+    fi
+    if [ "${DROPIN_PROBE_DISABLE:-}" = true ] && [ $active = 1 ]; then
+      setmode check; ledger_from -1; rm -rf "$Q/reports"; mkdir -p "$Q/reports"
+      (cd "$proj/${DROPIN_WORKDIR:-.}" && QUOD_DISABLE=1 bash -c "$DROPIN_TEST") >"$out/logs/probe-disable.log" 2>&1
+      n=$(ls "$Q/reports" | wc -l)
+      echo "probe: with QUOD_DISABLE=1 in the environment, Quod still ran $n vitest command lines" | tee -a "$out/logs/probe.log"
+    fi
+  fi
   if (( i % 2 == 0 )); then
     setmode plain; read -r p_ms p_rc < <(runtest plain "$i")
     setmode check; ledger_from $((i - 1)); rm -rf "$Q/reports"; mkdir -p "$Q/reports"
