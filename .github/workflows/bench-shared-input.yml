@@ -68,6 +68,7 @@ jobs:
           QUOD: ${{ runner.temp }}/quod
           OBSERVE: '0'
           MUTATE: none
+          FRESH_INSTALL: '0' # npm, installed once above; no dependency changes in the window
         run: bash scripts/vitest/shadow.sh "$PROJ" main 7 run
       - name: report
         if: always()
