@@ -1920,6 +1920,9 @@ class Quod:
             self.guard_on = True
             if self.mode == "critical":
                 self._install_load_hook()
+        elif self.mode in ("critical", "plain") and getattr(self, "wrap", None) is not None:
+            # Nothing replays: no per-test wrapper either.
+            self.config.pluginmanager.unregister(self.wrap)
 
     def _install_load_hook(self):
         import importlib._bootstrap as bootstrap
@@ -1995,6 +1998,18 @@ class Quod:
         for r in new:
             self.reasons[r] = "new"
         replay = {}
+        # Files that must run whatever narrowing says: when they are already
+        # most of the suite, the fast path follows; skip the narrowing.
+        must = len(run)
+        for f in order:
+            if f in run:
+                continue
+            r = files[f]
+            if r.get("quarantined") or r.get("unrecordable") or r.get("status") != "passed" or r.get("certified") is not True:
+                must += 1
+            elif any(st.state(k) != v for k, v in r["keys"].items() if not k.startswith("m:")):
+                must += 1
+        skip_narrow = must * 2 > len(order) and not OPTS.get("no_fast")
         for f in order:
             if f in run:
                 continue
@@ -2015,7 +2030,7 @@ class Quod:
                     hard = [k for k in changed if not k.startswith("m:")]
                     if hard:
                         why = "changed: %s" % ", ".join(hard[:3])
-                    elif OPTS.get("no_narrow") or not self._narrow(r, changed, sess_exec):
+                    elif OPTS.get("no_narrow") or skip_narrow or not self._narrow(r, changed, sess_exec):
                         why = "changed: %s" % ", ".join(changed[:3])
                     else:
                         self.narrowed.append(f)
@@ -2520,7 +2535,8 @@ def _register(plugin):
         def pytest_runtest_protocol(self, item, nextitem):
             yield from plugin._run_wrapper(item, nextitem)
 
-    return Wrap()
+    plugin.wrap = Wrap()
+    return plugin.wrap
 
 
 # ---------------------------------------------------------------------------
