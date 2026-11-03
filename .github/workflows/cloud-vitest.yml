@@ -46,7 +46,6 @@ permissions:
 env:
   BIN: ${{ inputs.bin }}
   REPO: ${{ inputs.repo }}
-  COMMIT: ${{ inputs.commit }}
   VITEST_ARGS: ${{ inputs.vitest_args }}
   SUITE: ${{ inputs.suite }}
   NODE_VERSION: ${{ inputs.node }}
@@ -77,6 +76,10 @@ jobs:
       - name: the project at ${{ inputs.commit }}, dependencies
         env:
           PUPPETEER_SKIP_DOWNLOAD: 'true'
+          # Only this step: a variable that differs per commit in the test
+          # steps is an input of every test file (vite reads the whole
+          # environment), so every file would run.
+          COMMIT: ${{ inputs.commit }}
         run: |
           echo /usr/local/node/bin >> "$GITHUB_PATH"
           export PATH=/usr/local/node/bin:$PATH
