@@ -1,16 +1,12 @@
 // The matrix for bench-dropin.yml: corpus.json, filtered by a comma list of
-// ids (empty: all), every entry with the fields the workflow reads.
-//   node matrix.mjs "<ids>" <commits>
+// ids (empty: all). Only what the workflow's set-up steps read goes into the
+// matrix (a job output that may hold a secret-looking value is dropped by
+// GitHub); env.mjs gives the bench step the rest by id.
+//   node matrix.mjs "<ids>"
 import fs from 'node:fs'
-const [only = '', commits = '12'] = process.argv.slice(2)
+const [only = ''] = process.argv.slice(2)
 const ids = only.split(',').map((s) => s.trim()).filter(Boolean)
 const corpus = JSON.parse(fs.readFileSync(new URL('./corpus.json', import.meta.url), 'utf8'))
-const m = corpus
-  .filter((e) => !ids.length || ids.includes(e.id))
-  .map((e) => ({
-    pnpm: false, bun: false, probe: "", probe_disable: false, corepack: false, corepack_first: false, node: '', node_file: '', bun_file: '',
-    build: '', env: '', workdir: '.', ...e,
-    commits: String(Math.min(Number(commits), e.commits ?? Infinity)),
-    meta: JSON.stringify(e),
-  }))
-console.log(JSON.stringify(m))
+const pick = ({ id, repo, pnpm = false, bun = false, corepack = false, corepack_first = false, node = '', node_file = '', bun_file = '' }) =>
+  ({ id, repo, pnpm, bun, corepack, corepack_first, node, node_file, bun_file })
+console.log(JSON.stringify(corpus.filter((e) => !ids.length || ids.includes(e.id)).map(pick)))

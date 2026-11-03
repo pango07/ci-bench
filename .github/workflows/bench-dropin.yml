@@ -37,8 +37,7 @@ jobs:
       - id: m
         env:
           ONLY: ${{ inputs.only }}
-          DROPIN_COMMITS: ${{ inputs.commits }}
-        run: echo "matrix=$(node scripts/dropin/matrix.mjs "$ONLY" "$DROPIN_COMMITS")" >> "$GITHUB_OUTPUT"
+        run: echo "matrix=$(node scripts/dropin/matrix.mjs "$ONLY")" >> "$GITHUB_OUTPUT"
 
   bench:
     needs: corpus
@@ -49,17 +48,6 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.corpus.outputs.matrix) }}
-    env:
-      DROPIN_SHA: ${{ matrix.sha }}
-      DROPIN_COMMITS: ${{ matrix.commits }}
-      DROPIN_INSTALL: ${{ matrix.install }}
-      DROPIN_BUILD: ${{ matrix.build }}
-      DROPIN_TEST: ${{ matrix.test }}
-      DROPIN_WORKDIR: ${{ matrix.workdir }}
-      DROPIN_EXTRA_ENV: ${{ matrix.env }}
-      DROPIN_META: ${{ matrix.meta }}
-      DROPIN_PROBE: ${{ matrix.probe }}
-      DROPIN_PROBE_DISABLE: ${{ matrix.probe_disable }}
     steps:
       # The bench's scripts go to the runner's temp; the workspace becomes the project.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,13 +56,18 @@ jobs:
       - name: bench scripts, the project checkout, runner tools before set-up
         env:
           REPO: ${{ matrix.repo }}
+          ID: ${{ matrix.id }}
+          COMMITS: ${{ inputs.commits }}
         run: |
           mkdir -p "$RUNNER_TEMP/cibench" && cp -a _cibench/scripts "$RUNNER_TEMP/cibench/" && rm -rf _cibench
+          node "$RUNNER_TEMP/cibench/scripts/dropin/env.mjs" "$ID" "$COMMITS" >> "$GITHUB_ENV"
+          DROPIN_SHA=$(node -e 'const e=require(process.argv[1]).find(x=>x.id===process.argv[2]);console.log(e.sha)' "$RUNNER_TEMP/cibench/scripts/dropin/corpus.json" "$ID")
+          DROPIN_COMMITS=$(node -e 'const e=require(process.argv[1]).find(x=>x.id===process.argv[2]);console.log(Math.min(+process.argv[3],e.commits??1e9))' "$RUNNER_TEMP/cibench/scripts/dropin/corpus.json" "$ID" "$COMMITS")
           echo "before set-up: node=$(command -v node) $(node --version 2>/dev/null); pnpm=$(command -v pnpm || echo none); yarn=$(command -v yarn || echo none) $(yarn --version 2>/dev/null); bun=$(command -v bun || echo none); corepack=$(command -v corepack || echo none)"
           git clone -q --filter=blob:none "https://github.com/$REPO" .
           start=$(git rev-list --first-parent -n $((DROPIN_COMMITS + 1)) "$DROPIN_SHA" | tail -1)
           git checkout -q "$start"
-          echo "window start ${start:0:9}"
+          echo "window start ${start:0:9} (window end ${DROPIN_SHA:0:9}, $DROPIN_COMMITS commits)"
 
       # ---- the repository's own set-up, as its CI job has it ----
       - name: corepack enable (before setup-node, as the repo's CI)
@@ -126,7 +119,7 @@ jobs:
           pattern: dropin-*
           path: ${{ runner.temp }}/rows
       - run: |
-          mkdir -p "$RUNNER_TEMP/sb"
+          mkdir -p "$RUNNER_TEMP/sb" "$RUNNER_TEMP/rows"
           node scripts/dropin/scoreboard.mjs "$RUNNER_TEMP/rows" "$RUNNER_TEMP/sb" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
