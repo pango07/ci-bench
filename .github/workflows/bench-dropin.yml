@@ -32,6 +32,10 @@ on:
         description: The second-witness quod (a bin-<sha> release of this repo) for mode witness
         required: false
         default: bin-42050dc
+      hook_ref:
+        description: Bench the hook.cjs of this pango07/quod-action ref instead of the pinned action's (empty = the action's)
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -116,6 +120,7 @@ jobs:
       - name: drop-in bench (${{ inputs.mode }})
         env:
           DROPIN_MODE: ${{ inputs.mode }}
+          DROPIN_HOOK_REF: ${{ inputs.hook_ref }}
         run: bash "$RUNNER_TEMP/cibench/scripts/dropin/run.sh"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
