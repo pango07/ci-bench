@@ -139,6 +139,7 @@ EOF
     fi
   fi
 done
+cp "$state/ledger.json" "$out/logs/ledger-final.json" 2>/dev/null
 python3 "$here/report.py" "$out/results.jsonl" "${args[*]}" "$(git remote get-url origin)" "$lag" "$audits" > "$out/report.md"
 cat "$out/report.md"
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$out/report.md" >> "$GITHUB_STEP_SUMMARY"
