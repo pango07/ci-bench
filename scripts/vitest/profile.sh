@@ -46,8 +46,11 @@ declare -A V=(
 # PROFILE_EXTRA="label=K=V,K2=V2;label2=..." adds variants
 IFS=';' read -ra extra <<<"${PROFILE_EXTRA:-}"
 for e in "${extra[@]}"; do [ -n "$e" ] && V[${e%%=*}]=${e#*=}; done
-full_variants=(${PROFILE_FULL:-plain norec rec rec-norender rec-nocov rec-notake rec-nocache rec-early rec-nofs rec-noenv rec-noloader rec-nomain rec-bare rec-nosetup})
-typ_variants=(${PROFILE_TYP:-plain norec rec rec-norender rec-nocov rec-notake rec-nocache rec-early})
+# (PROFILE_FULL / PROFILE_TYP: comma- or space-separated)
+pf=${PROFILE_FULL:-}; full_variants=(${pf//,/ })
+[ -n "${PROFILE_FULL:-}" ] || full_variants=(${PROFILE_FULL_DEFAULT:-plain norec rec rec-norender rec-nocov rec-notake rec-nocache rec-early rec-nofs rec-noenv rec-noloader rec-nomain rec-bare rec-nosetup})
+pt=${PROFILE_TYP:-}; typ_variants=(${pt//,/ })
+[ -n "${PROFILE_TYP:-}" ] || typ_variants=(${PROFILE_TYP_DEFAULT:-plain norec rec rec-norender rec-nocov rec-notake rec-nocache rec-early})
 
 one() { # kind round label dir
   local kind=$1 r=$2 label=$3 dir=$4 spec=${V[$3]}
