@@ -93,7 +93,7 @@ for i in "${!commits[@]}"; do
     read -r q_ms q_rc < <(quod "$i"); read -r p_ms p_rc < <(plain "$i")
   fi
   if via_action; then
-    state=$(ls -td "$RUNNER_TEMP"/action/quod/vitest/*/ 2>/dev/null | head -1); state=${state%/}
+    state=$(ls -td "$RUNNER_TEMP"/quod/vitest/*/ 2>/dev/null | head -1); state=${state%/}
     [ -n "$state" ] || { echo "::error::the action did not run quod (no ledger directory)"; exit 1; }
     node -e '
       const fs = require("fs"); let o = {}; try { o = JSON.parse(fs.readFileSync(process.argv[1], "utf8")) } catch {}
