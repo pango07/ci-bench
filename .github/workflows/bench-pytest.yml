@@ -27,7 +27,7 @@ on:
       sha:
         description: The last commit of the window
         required: false
-        default: main
+        default: HEAD
       commits:
         description: How many first-parent commits
         required: false

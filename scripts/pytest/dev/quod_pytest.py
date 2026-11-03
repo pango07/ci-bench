@@ -1127,13 +1127,18 @@ class Guard:
     def __init__(self):
         self.before = None
         self.extra = {}  # state of modules first loaded inside the window, at load
+        self.ns = 0
+        self.n = 0
 
     def start(self, session):
         _pause(1)
+        t = time.perf_counter_ns()
         try:
             self.before = fingerprint(session)
         finally:
             _pause(-1)
+            self.ns += time.perf_counter_ns() - t
+            self.n += 1
         self.extra = {}
 
     def loaded(self, mod):
@@ -1157,10 +1162,13 @@ class Guard:
 
     def end(self, session):
         _pause(1)
+        t = time.perf_counter_ns()
         try:
             after = fingerprint(session)
         finally:
             _pause(-1)
+            self.ns += time.perf_counter_ns() - t
+            self.n += 1
         d = {}
         before = dict(self.extra)
         before.update(self.before or {})
@@ -2510,6 +2518,8 @@ def main():
         "unexpected": plugin.unexpected,
         "tests": plugin.outcomes(),
         "session_changed": plugin.session_changed[:20],
+        "guard_ms": int(GUARD.ns / 1e6) if GUARD is not None else 0,
+        "guard_fps": GUARD.n if GUARD is not None else 0,
     }
     if mode == "critical" and plugin.tripped:
         # The guard: a file that ran changed shared state a replayed file can

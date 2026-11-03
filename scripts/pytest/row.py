@@ -27,6 +27,7 @@ print(json.dumps({
     "ledger_from": int(frm), "shadow_ms": int(sh_ms), "shadow_exit": int(sh_rc), "install_ms": int(install_ms), "ledger_bytes": int(nbytes),
     "ran": s.get("ran"), "replayed": s.get("replayed"), "replayed_tests": s.get("replayed_tests"), "collected_only": len(s.get("collected_only") or []),
     "narrowed": len(s.get("narrowed") or []), "select_ms": s.get("select_ms"), "tripped": s.get("tripped"),
+    "guard_ms": s.get("guard_ms"), "guard_fps": s.get("guard_fps"), "shadow_guard_ms": h.get("guard_ms"),
     "reasons": dict(list((s.get("reasons") or {}).items())[:12]), "session_changed": s.get("session_changed"),
     "shadow_ran": h.get("ran"), "recorded": sh.get("recorded"), "certified": sh.get("certified"), "uncertified": sh.get("uncertified"),
     "quarantined": sh.get("quarantined"), "unrecordable": sh.get("unrecordable"), "audit_mismatches": sh.get("audit_mismatches"),
