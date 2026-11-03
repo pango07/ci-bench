@@ -1,0 +1,133 @@
+# go test on N consecutive first-parent commits of a real Go project: plain
+# go test (warm GOCACHE, fresh-checkout mtimes) against `quod gotest`'s
+# critical path, with the recording shadow as its own column. Every
+# commit's two -json streams compared package by package and test by test.
+#
+#   gh workflow run bench-gotest.yml -R pango07/ci-bench                         (spf13/afero, 20 commits)
+#   gh workflow run bench-gotest.yml -R pango07/ci-bench -f repo=expr-lang/expr -f sha=<sha>
+#   gh workflow run bench-gotest.yml -R pango07/ci-bench -f bin=bin-<sha>
+name: bench-gotest
+
+on:
+  workflow_dispatch:
+    inputs:
+      bin:
+        description: The runner binary, a release tag of this repo (bin-<sha>), or latest
+        required: false
+        default: latest
+      mode:
+        description: "shadow (critical path vs plain, the recording job as its own column)"
+        required: false
+        default: shadow
+        type: choice
+        options: [shadow]
+      repo:
+        description: The project (owner/name on GitHub)
+        required: false
+        default: spf13/afero
+      sha:
+        description: The last commit of the window
+        required: false
+        default: d2bffea700c045694727c3172ad6521da4e218b0
+      commits:
+        description: How many first-parent commits
+        required: false
+        default: '20'
+      gotest_args:
+        description: go test's arguments (keep -json: the comparison reads it)
+        required: false
+        default: -json ./...
+      go:
+        description: Go version (a go.dev release)
+        required: false
+        default: 1.27.3
+      lag:
+        description: "how many of the newest recordings have not finished when the next commit starts"
+        required: false
+        default: '0'
+      mutate:
+        description: Commit indexes that get a mutation check (space-separated)
+        required: false
+        default: 4 9 14 19
+      extra_env:
+        description: "Extra environment for the bench scripts (space-separated K=V)"
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  MODE: ${{ inputs.mode }}
+  BIN: ${{ inputs.bin }}
+  REPO: ${{ inputs.repo }}
+  SHA: ${{ inputs.sha }}
+  COMMITS: ${{ inputs.commits }}
+  GOTEST_ARGS: ${{ inputs.gotest_args }}
+  SHADOW_LAG: ${{ inputs.lag }}
+  MUTATE: ${{ inputs.mutate }}
+  PROJ: /work/proj
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: go ${{ inputs.go }} (go.dev tarball; 1.27.3 checked against pango07/quod's versions.toml sha256)
+        env:
+          GO_VERSION: ${{ inputs.go }}
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/go.tgz" "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
+          if [ "$GO_VERSION" = 1.27.3 ]; then
+            echo "65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40  $RUNNER_TEMP/go.tgz" | sha256sum -c -
+          fi
+          sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf "$RUNNER_TEMP/go.tgz"
+          echo /usr/local/go/bin >> "$GITHUB_PATH"
+          /usr/local/go/bin/go version
+      - name: host (/work, strace)
+        env:
+          EXTRA_ENV: ${{ inputs.extra_env }}
+        run: |
+          sudo mkdir -p /work && sudo chown "$(id -u):$(id -g)" /work
+          command -v strace >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq strace; }
+          strace -V | head -1
+          for kv in $EXTRA_ENV; do echo "$kv" >> "$GITHUB_ENV"; done
+      - name: runner binary (release ${{ inputs.bin }})
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$BIN
+          [ "$tag" = latest ] && tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          gh release download "$tag" -R "$GITHUB_REPOSITORY" -p 'quod-linux-x86_64.tar.gz' -D "$RUNNER_TEMP"
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/quod-linux-x86_64.tar.gz"
+          "$RUNNER_TEMP/quod" gotest --help >/dev/null
+          echo "BIN_TAG=$tag" >> "$GITHUB_ENV"
+      - name: checkout the project
+        run: |
+          git clone -q "https://github.com/$REPO" "$PROJ"
+          cd "$PROJ"
+          git checkout -q "$SHA"
+          go version
+      - name: summary header
+        run: |
+          {
+            echo "**${REPO}** at \`${SHA:0:9}\`, ${COMMITS} commits, mode \`${MODE}\`, binary \`${BIN_TAG}\`, $(go version | awk '{print $3}'), $(strace -V | head -1)."
+            echo "Runner: ${RUNNER_ENVIRONMENT:-github-hosted} \`ubuntu-latest\` ($(. /etc/os-release && echo "$PRETTY_NAME"), $(nproc) CPUs, $(awk '/MemTotal/{printf "%.0f GiB", $2/1048576}' /proc/meminfo)). Run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: shadow
+        if: env.MODE == 'shadow'
+        env:
+          QUOD: ${{ runner.temp }}/quod
+        run: bash scripts/gotest/shadow.sh "$PROJ" "$SHA" "$COMMITS" $GOTEST_ARGS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: bench-gotest
+          path: |
+            ${{ runner.temp }}/bench-gotest/results.jsonl
+            ${{ runner.temp }}/bench-gotest/report.md
+            ${{ runner.temp }}/bench-gotest/logs/
+            /work/state/completed/
+          retention-days: 7
