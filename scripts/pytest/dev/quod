@@ -35,6 +35,10 @@ opts = {"mode": "critical" if o["no_record"] else "shadow", "dir": d, "summary":
         "audits": 0 if o["no_record"] else int(o["audits"]), "full": o["full"], "no_narrow": o["no_narrow"], "volatile": vol, "quod": "dev"}
 op = os.path.join(d, "plugin", "opts-%d.json" % os.getpid())
 json.dump(opts, open(op, "w"))
-rc = subprocess.run([o["python"], pp, op] + rest).returncode
+rp = os.path.join(d, "plugin", "run.py")
+rsrc = open(os.path.join(here, "run.py")).read()
+if not os.path.exists(rp) or open(rp).read() != rsrc:
+    open(rp, "w").write(rsrc)
+rc = subprocess.run([o["python"], rp, op] + rest).returncode
 os.unlink(op)
 sys.exit(rc if rc >= 0 else 128 - rc)
