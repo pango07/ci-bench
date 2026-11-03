@@ -36,6 +36,10 @@ on:
         description: Node.js version
         required: false
         default: 24.22.2
+      only_ab:
+        description: "true: only the same-runner A/B (scripts/floor/ab.sh), no seed/case jobs"
+        required: false
+        default: 'false'
 
 permissions:
   contents: read
@@ -48,7 +52,28 @@ env:
   NEXT_TELEMETRY_DISABLED: '1'
 
 jobs:
+  # Same runner, no caches: full against incremental tsc per package, and
+  # serial against parallel, on the base plus one commit.
+  ab:
+    if: inputs.only_ab == 'true'
+    name: ab ${{ matrix.case }}
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [source, typeerror, lock]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/floor
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node }}
+      - run: bash scripts/floor/ab.sh "${{ matrix.case }}" 3 "${{ inputs.scale }}" | tee -a "$GITHUB_STEP_SUMMARY"
+
   seed:
+    if: inputs.only_ab != 'true'
     name: seed ${{ matrix.strategy }}
     strategy:
       fail-fast: false
@@ -265,7 +290,7 @@ jobs:
 
   report:
     needs: case
-    if: always()
+    if: always() && inputs.only_ab != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
