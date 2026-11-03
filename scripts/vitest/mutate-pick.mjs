@@ -12,7 +12,12 @@ const rand = (n) => {
   return seed % n
 }
 const options = []
+// Under the second-witness policy only trusted records replay: mutate a
+// function one of those executed (a provisional record's file runs anyway).
+const need = Number(process.env.QUOD_VITEST_WITNESSES ?? 1)
+const trusted = (rec) => need <= 1 || (!rec.quarantined && (rec.w?.n ?? 0) >= need + Math.min(rec.w?.disagreements ?? 0, 5))
 for (const rec of Object.values(l.files)) {
+  if (!trusted(rec)) continue
   for (const [k, fns] of Object.entries(rec.cov ?? {})) {
     const key = l.keys[Number(k)]
     if (!key?.startsWith('f:') || /__tests__|\.spec\.|\.test\./.test(key) || key.includes('/node_modules/')) continue
@@ -26,7 +31,7 @@ const uniq = [...new Set(options)].sort()
 // source file some recorded test file depends on (run from the project root).
 if (!uniq.length) {
   const deps = new Set()
-  for (const rec of Object.values(l.files)) for (const k of rec.deps ?? []) deps.add(l.keys[k])
+  for (const rec of Object.values(l.files)) if (trusted(rec)) for (const k of rec.deps ?? []) deps.add(l.keys[k])
   for (const key of deps) {
     if (!key?.startsWith('f:') || !/\.[cm]?[tj]sx?$/.test(key) || /__tests__|\.spec\.|\.test\.|(^|\/)test\//.test(key) || key.includes('node_modules')) continue
     let lines

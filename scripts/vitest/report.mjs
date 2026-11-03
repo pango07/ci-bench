@@ -60,6 +60,11 @@ const q = rows.filter((r) => r.select_ms != null)
 if (q.length) {
   out.push(`Quod's own time per commit (outside vitest): select median ${median(q.map((r) => r.select_ms)).toFixed(0)} ms, record median ${median(q.map((r) => r.record_ms)).toFixed(0)} ms. vitest start-up in the driver: median ${median(q.map((r) => r.driver?.init ?? 0)).toFixed(0)} ms.`)
 }
+const wr = rows.filter((r) => r.provisional != null)
+if (wr.length && process.env.QUOD_VITEST_WITNESSES > 1) {
+  const t = (k) => wr.reduce((a, r) => a + (r[k] ?? 0), 0)
+  out.push(`Second witness (QUOD_VITEST_WITNESSES=${process.env.QUOD_VITEST_WITNESSES}): ${t('provisional')} file runs were a provisional record running again; ${t('promoted')} records became trusted; ${t('disagreed')} disagreements (quarantined). Per commit (provisional / promoted): ${wr.map((r) => `#${r.i} ${r.provisional}/${r.promoted ?? 0}`).join(', ')}.`)
+}
 if (warm) out.push(`Warm-up (the window's parent, not counted; Quod records its ledger there as the previous CI run would have): plain ${s(warm.plain_ms)} s, Quod ${s(warm.quod_ms)} s.`)
 const unrec = {}
 for (const r of rows) for (const [k, v] of Object.entries(r.unrecordable ?? {})) unrec[k] = Math.max(unrec[k] ?? 0, v)
