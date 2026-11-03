@@ -68,7 +68,7 @@ for i in "${!commits[@]}"; do
     lock=$nl
   fi
   kinds=()
-  if [ "${FULL_AT:-all}" = all ] || [[ " ${FULL_AT} " == *" $i "* ]]; then kinds+=(full); fi
+  if [ "${FULL_AT:-all}" = all ] || [[ " ${FULL_AT//,/ } " == *" $i "* ]]; then kinds+=(full); fi
   [ -n "$prev" ] && kinds+=(typical)
   last=
   for kind in "${kinds[@]}"; do

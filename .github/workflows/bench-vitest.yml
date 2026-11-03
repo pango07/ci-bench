@@ -7,7 +7,7 @@
 #   gh workflow run bench-vitest.yml -R pango07/ci-bench -f commits=3
 #   gh workflow run bench-vitest.yml -R pango07/ci-bench -f mode=shadow
 #   gh workflow run bench-vitest.yml -R pango07/ci-bench -f bin=bin-a074f76
-#   gh workflow run bench-vitest.yml -R pango07/ci-bench -f mode=overhead -f commits=4 -f extra_env='ROUNDS=5 FULL_AT=0'
+#   gh workflow run bench-vitest.yml -R pango07/ci-bench -f mode=overhead -f commits=4 -f extra_env='ROUNDS=5 FULL_AT=0,2'
 #
 # bench and shadow report CI fast and CI cost against plain CI
 # (scripts/vitest/ci-metrics.mjs; metrics.json in the artifact).
