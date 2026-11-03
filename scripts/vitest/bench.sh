@@ -93,7 +93,7 @@ for i in "${!commits[@]}"; do
     read -r q_ms q_rc < <(quod "$i"); read -r p_ms p_rc < <(plain "$i")
   fi
   if via_action; then
-    state=$(ls -td "$RUNNER_TEMP"/quod/vitest/*/ "$RUNNER_TEMP"/quod/vitest/.[!.]*/ 2>/dev/null | grep -v '/\.suites/$' | head -1); state=${state%/}
+    state=$(find "$RUNNER_TEMP/quod/vitest" -mindepth 1 -maxdepth 1 -type d ! -name .suites -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
     [ -n "$state" ] || { echo "::error::the action did not run quod (no ledger directory)"; exit 1; }
     node -e '
       const fs = require("fs"); let o = {}; try { o = JSON.parse(fs.readFileSync(process.argv[1], "utf8")) } catch {}
