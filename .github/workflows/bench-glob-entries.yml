@@ -1,0 +1,103 @@
+# What a test consumes of an import.meta.glob map: a Convex backend tested
+# the standard convex-test way (scripts/glob-entries/make-repo.sh: real
+# convex and convex-test, helpers.ts globs ../convex/**/*.ts), ten commits
+# (a new module, a function edit, a type-only edit, an absent lookup that
+# appears, a runtime break, a deleted module, convex-test's root moved, a
+# schema edit), run through scripts/vitest/shadow.sh with each binary, one
+# job each: plain vitest against the critical path per commit, every replay
+# compared with plain per test. A last job puts the sides next to each other.
+#
+#   gh workflow run bench-glob-entries.yml -R pango07/ci-bench -f bins=bin-0ea22e0,bin-d87bcba,bin-5949318
+name: bench-glob-entries
+
+on:
+  workflow_dispatch:
+    inputs:
+      bins:
+        description: Binaries (release tags), comma-separated, in report order
+        required: false
+        default: bin-0ea22e0,bin-d87bcba
+      node:
+        description: Node.js version
+        required: false
+        default: 24.22.2
+
+permissions:
+  contents: read
+
+jobs:
+  sides:
+    runs-on: ubuntu-latest
+    outputs:
+      bins: ${{ steps.b.outputs.bins }}
+    steps:
+      - id: b
+        run: echo "bins=$(jq -cn --arg s '${{ inputs.bins }}' '$s | split(",") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
+  bench:
+    needs: sides
+    strategy:
+      fail-fast: false
+      matrix:
+        bin: ${{ fromJson(needs.sides.outputs.bins) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NODE_VERSION: ${{ inputs.node }}
+      PROJ: /work/proj
+      TAG: ${{ matrix.bin }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: host
+        run: bash scripts/host-setup.sh
+      - name: binary ${{ env.TAG }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p 'quod-linux-x86_64.tar.gz' -D "$RUNNER_TEMP"
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/quod-linux-x86_64.tar.gz"
+      - name: fixture
+        run: |
+          echo /usr/local/node/bin >> "$GITHUB_PATH"
+          export PATH=/usr/local/node/bin:$PATH
+          sudo env PATH="$PATH" npm i -g -s pnpm@10.34.9
+          bash scripts/glob-entries/make-repo.sh "$PROJ"
+          cd "$PROJ"
+          node -p "'vitest ' + require('vitest/package.json').version + ', vite ' + require('vite/package.json').version + ', convex-test ' + require('convex-test/package.json').version + ', convex ' + require('convex/package.json').version"
+      - name: shadow bench (${{ env.TAG }})
+        env:
+          QUOD: ${{ runner.temp }}/quod
+          OBSERVE: '0'
+          MUTATE: none
+          FRESH_INSTALL: '1'
+        run: bash scripts/vitest/shadow.sh "$PROJ" main 10 run
+      - name: logs
+        if: always()
+        run: |
+          grep -h 'shared input changed\|keyed per module\|by what each file read\|recorded files\|test files: running' "$RUNNER_TEMP"/bench-vitest/logs/crit-*.log "$RUNNER_TEMP"/bench-vitest/logs/shadow-*.log | sort | uniq -c | head -60 || true
+          mkdir -p "$RUNNER_TEMP/side"; cp "$RUNNER_TEMP"/bench-vitest/results.jsonl "$RUNNER_TEMP"/bench-vitest/metrics.json "$RUNNER_TEMP/side/" 2>/dev/null || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: glob-entries-${{ matrix.bin }}
+          path: |
+            ${{ runner.temp }}/side
+            ${{ runner.temp }}/bench-vitest/logs
+            ${{ runner.temp }}/bench-vitest/report.md
+          if-no-files-found: ignore
+  report:
+    needs: [sides, bench]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: glob-entries-*
+          path: sides
+      - name: side by side
+        run: |
+          args=()
+          for b in $(jq -r '.[]' <<<'${{ needs.sides.outputs.bins }}'); do
+            [ -f "sides/glob-entries-$b/side/results.jsonl" ] && args+=("$b=sides/glob-entries-$b/side")
+          done
+          node scripts/glob-entries/report.mjs "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
