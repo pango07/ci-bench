@@ -635,7 +635,7 @@ class Recorder:
         w = self.cur
         if key not in w.reads:
             w.reads[key] = None
-            if w is self.S and len(self.why) < 400:
+            if (w is self.S or w.kind == "l" or key.startswith("f:")) and len(self.why) < 3000:
                 self.why[key] = mod if mod is not None else _caller()
 
     def _on_write(self, p):
@@ -1972,6 +1972,15 @@ class Quod:
                             collect.discard(f)
                             self.reasons[f] = "before %s, which is order-dependent" % a
                             changed = True
+        # The fast path: when most files must run anyway, replaying the rest
+        # saves less than the guard costs. Run everything, plainly (no guard,
+        # no snapshots): never slower than plain pytest by more than the
+        # selection.
+        if replay and len(run) * 2 > len(order) and not OPTS.get("no_fast"):
+            self.reasons["*"] = "fast path: %d of %d files must run" % (len(run), len(order))
+            run |= set(replay)
+            replay = {}
+            collect = set()
         self.run_files = run
         self.replay = replay
         self.collect_only = collect
@@ -2234,7 +2243,7 @@ class Quod:
         first = self.cur_run != r
         if first:
             self.cur_run = r
-            if self.guard_on:
+            if self.guard_on and self._run_guard(r):
                 GUARD.start(self.session, reuse=True)
             if REC is not None:
                 self.thread_mark = set(threading.enumerate())
@@ -2254,7 +2263,7 @@ class Quod:
                     left = [t for t in threading.enumerate() if t not in self.thread_mark and t.is_alive()]
                     if left:
                         REC.file(r).taint("a thread it started outlived it (%s)" % left[0].name)
-                if self.guard_on:
+                if self.guard_on and self._run_guard(r):
                     d = GUARD.end(self.session)
                     self.rleak[r] = d
                     if self.mode == "critical":
@@ -2317,6 +2326,15 @@ class Quod:
         if REC is not None:
             REC.on = False
         return outcome
+
+    def _run_guard(self, r):
+        """Fingerprint around this file's tests? Always in the shadow (it
+        records the leak); on the critical path only while a replayed file
+        comes later (once none does, none will for later files either)."""
+        if self.mode != "critical":
+            return True
+        here = self._pos(r)
+        return any(self._pos(f) > here for f in self.replay)
 
     def _check_leak(self, r, d):
         """The critical path's guard: a file that ran here changed state a
