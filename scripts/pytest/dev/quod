@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+# Development stand-in for `quod pytest` (bin=dev): the same flags, the
+# plugin from scripts/pytest/dev/quod_pytest.py. The bench's numbers come
+# from release binaries; this only shortens iterations on the plugin.
+import json, os, subprocess, sys
+here = os.path.dirname(os.path.realpath(__file__))
+a = sys.argv[1:]
+if not a or a[0] != "pytest":
+    print("usage: quod pytest ...", file=sys.stderr); sys.exit(2)
+a = a[1:]
+if a and a[0] in ("--help", "-h"):
+    print("--dir --no-record --expect-report --audits --summary --full --no-narrow --python"); sys.exit(0)
+o = {"dir": None, "no_record": False, "expect_report": None, "audits": 4, "summary": None, "full": False, "no_narrow": False, "python": "python"}
+rest = []
+i = 0
+while i < len(a):
+    x = a[i]
+    if x == "--":
+        rest = a[i + 1:]; break
+    k = x[2:].replace("-", "_")
+    if k in ("no_record", "full", "no_narrow"):
+        o[k] = True; i += 1; continue
+    if k in o:
+        o[k] = a[i + 1]; i += 2; continue
+    rest = a[i:]; break
+ab = lambda p: os.path.abspath(p) if p else None
+d = ab(o["dir"] or ".quod/pytest")
+os.makedirs(os.path.join(d, "plugin"), exist_ok=True)
+src = open(os.path.join(here, "quod_pytest.py")).read()
+pp = os.path.join(d, "plugin", "quod_pytest.py")
+if not os.path.exists(pp) or open(pp).read() != src:
+    open(pp, "w").write(src)
+vol = [k for k in os.environ if k.startswith(("GITHUB_", "RUNNER_", "ACTIONS_", "QUOD_", "INVOCATION_ID", "JOURNAL_STREAM")) or k in ("OLDPWD", "_")]
+opts = {"mode": "critical" if o["no_record"] else "shadow", "dir": d, "summary": ab(o["summary"]), "expect_report": ab(o["expect_report"]),
+        "audits": 0 if o["no_record"] else int(o["audits"]), "full": o["full"], "no_narrow": o["no_narrow"], "volatile": vol, "quod": "dev"}
+op = os.path.join(d, "plugin", "opts-%d.json" % os.getpid())
+json.dump(opts, open(op, "w"))
+rc = subprocess.run([o["python"], pp, op] + rest).returncode
+os.unlink(op)
+sys.exit(rc if rc >= 0 else 128 - rc)

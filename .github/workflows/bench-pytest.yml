@@ -91,6 +91,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag=$BIN
+          if [ "$tag" = dev ]; then
+            ln -sf "$GITHUB_WORKSPACE/scripts/pytest/dev/quod" "$RUNNER_TEMP/quod"
+            echo "BIN_TAG=dev" >> "$GITHUB_ENV"; exit 0
+          fi
           [ "$tag" = latest ] && tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
           gh release download "$tag" -R "$GITHUB_REPOSITORY" -p 'quod-linux-x86_64.tar.gz' -D "$RUNNER_TEMP"
           tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/quod-linux-x86_64.tar.gz"
