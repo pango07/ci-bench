@@ -1446,39 +1446,45 @@ def _innermost(funcs, lo, hi, insertion):
     return best
 
 
-def narrowable(old_src, new_src, executed):
-    """True when every change from old_src to new_src lies strictly inside the
-    body of a function never executed (executed: {(firstline, name)} of the
-    old version)."""
+def changed_functions(old_src, new_src):
+    """The (firstline, name) of the innermost old def holding each change, or
+    None when some change is not strictly inside a function body (or the
+    new version does not compile, or nothing changed)."""
     try:
         old_tree = ast.parse(old_src)
         new_tree = ast.parse(new_src)
         compile(new_src, "<quod>", "exec")
     except Exception:
-        return False
+        return None
     of = _functions(old_tree)
     nf = _functions(new_tree)
     a = old_src.splitlines()
     b = new_src.splitlines()
     sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
-    any_change = False
+    out = set()
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
             continue
-        any_change = True
         fo = _innermost(of, i1 + 1, i2, i1 == i2)
         fn = _innermost(nf, j1 + 1, j2, j1 == j2)
         if fo is None or fn is None or fo[0] != fn[0]:
-            return False
-        if (fo[1], fo[2]) in executed:
-            return False
+            return None
         # Insertions at the very end of a body: the new side must agree the
         # lines are inside (a dedented statement would not be).
         if i1 == i2 and not (fn[3] <= j1 + 1 and j2 <= fn[4]):
-            return False
+            return None
         if j1 == j2 and not (fo[3] <= i1 + 1 and i2 <= fo[4]):
-            return False
-    return any_change
+            return None
+        out.add((fo[1], fo[2]))
+    return out or None
+
+
+def narrowable(old_src, new_src, executed):
+    """True when every change from old_src to new_src lies strictly inside the
+    body of a function never executed (executed: {(firstline, name)} of the
+    old version)."""
+    ch = changed_functions(old_src, new_src)
+    return ch is not None and not (ch & executed)
 
 
 # ---------------------------------------------------------------------------
@@ -2010,15 +2016,22 @@ class Quod:
             old = r["keys"].get(k) or self.L["session"]["keys"].get(k)
             if not old or len(old) != 32:
                 return False
-            try:
-                with open(os.path.join(OPTS["dir"], "blobs", old), "rb") as f:
-                    old_src = f.read().decode("utf-8")
-                with open(absp(p), "rb") as f:
-                    new_src = f.read().decode("utf-8")
-            except (OSError, UnicodeDecodeError):
+            memo = self.__dict__.setdefault("_changed", {})
+            ch = memo.get((p, old), False)
+            if ch is False:
+                try:
+                    with open(os.path.join(OPTS["dir"], "blobs", old), "rb") as f:
+                        old_src = f.read().decode("utf-8")
+                    with open(absp(p), "rb") as f:
+                        new_src = f.read().decode("utf-8")
+                    ch = changed_functions(old_src, new_src)
+                except (OSError, UnicodeDecodeError):
+                    ch = None
+                memo[(p, old)] = ch
+            if ch is None:
                 return False
             executed = set(tuple(x) for x in exe.get(p, ())) | set(tuple(x) for x in sess_exec.get(p, ()))
-            if not narrowable(old_src, new_src, executed):
+            if ch & executed:
                 return False
         return True
 
