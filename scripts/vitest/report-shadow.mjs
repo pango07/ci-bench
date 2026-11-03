@@ -79,7 +79,7 @@ const broken = [first, ...rows].filter((r) => r?.shadow_broken).map((r) => r.i)
 if (broken.length) out.push(`\n**SHADOW RECORDED NOTHING on ${broken.length} commit${broken.length === 1 ? '' : 's'} (${broken.join(', ')})**: the recording job failed there (see logs/shadow-<i>.log); the critical path stayed correct but replayed from an older recording.\n`)
 if (swrong) out.push(`Shadow runs that disagreed with plain in a file they replayed: ${swrong} (they report nothing to the developer; listed for the recorder).`)
 const installs = rows.filter((r) => r.install_ms > 0)
-if (installs.length) out.push(`Dependencies reinstalled (lockfile changed; not timed, same for all): commits ${installs.map((r) => r.i).join(', ')}.`)
+if (installs.length) out.push(`Install (fresh, per commit; counted in CI fast and CI cost above, not in the test-step columns): median ${s(median(installs.map((r) => r.install_ms)))} s.`)
 if (muts.length) {
   out.push('')
   out.push('Mutation check (not timed): a `throw` put into a function a recorded test executed; the critical path must run the tests it breaks and report what plain vitest reports.')

@@ -65,7 +65,7 @@ const unrec = {}
 for (const r of rows) for (const [k, v] of Object.entries(r.unrecordable ?? {})) unrec[k] = Math.max(unrec[k] ?? 0, v)
 if (Object.keys(unrec).length) out.push(`Files that always run (the recorder cannot follow them): ${Object.entries(unrec).map(([k, v]) => `${v} (${k})`).join(', ')}.`)
 const installs = rows.filter((r) => r.install_ms > 0)
-if (installs.length) out.push(`Dependencies reinstalled (lockfile changed; not timed, same for both): commits ${installs.map((r) => r.i).join(', ')}.`)
+if (installs.length) out.push(`Install (fresh, per commit; counted in CI fast and CI cost above, not in the test-step columns): median ${s(median(installs.map((r) => r.install_ms)))} s.`)
 if (muts.length) {
   out.push('')
   out.push('Mutation check (not timed): a `throw` put into a function a recorded test executed; Quod must run the tests it breaks and report what plain vitest reports.')

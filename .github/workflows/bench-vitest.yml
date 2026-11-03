@@ -7,6 +7,10 @@
 #   gh workflow run bench-vitest.yml -R pango07/ci-bench -f commits=3
 #   gh workflow run bench-vitest.yml -R pango07/ci-bench -f mode=shadow
 #   gh workflow run bench-vitest.yml -R pango07/ci-bench -f bin=bin-a074f76
+#   gh workflow run bench-vitest.yml -R pango07/ci-bench -f mode=overhead -f commits=4 -f extra_env='ROUNDS=5 FULL_AT=0'
+#
+# bench and shadow report CI fast and CI cost against plain CI
+# (scripts/vitest/ci-metrics.mjs; metrics.json in the artifact).
 #
 # The project lives in /work (a runner's home is 0750; the observed run's
 # sandbox cannot reach it) and runs on the pinned node at /usr/local/node,
@@ -21,11 +25,11 @@ on:
         required: false
         default: latest
       mode:
-        description: "bench (inline: the N-commit benchmark), shadow (critical path vs plain, the recording job as its own column) or profile (the recorder's cost at the pinned commit)"
+        description: "bench (inline: the N-commit benchmark), shadow (critical path vs plain, the recording job as its own column), overhead (plain / --no-record / inline, interleaved ROUNDS times) or profile (the recorder's cost at the pinned commit)"
         required: false
         default: bench
         type: choice
-        options: [bench, shadow, profile, breakdown]
+        options: [bench, shadow, overhead, profile, breakdown]
       repo:
         description: The project (owner/name on GitHub)
         required: false
@@ -139,6 +143,11 @@ jobs:
         env:
           QUOD: ${{ runner.temp }}/quod
         run: bash scripts/vitest/shadow.sh "$PROJ" "$SHA" "$COMMITS" $VITEST_ARGS
+      - name: overhead
+        if: env.MODE == 'overhead'
+        env:
+          QUOD: ${{ runner.temp }}/quod
+        run: bash scripts/vitest/overhead.sh "$PROJ" "$SHA" "$COMMITS" $VITEST_ARGS
       - name: profile
         if: env.MODE == 'profile'
         env:
@@ -156,5 +165,7 @@ jobs:
           path: |
             ${{ runner.temp }}/bench-vitest/report.md
             ${{ runner.temp }}/bench-vitest/*.jsonl
+            ${{ runner.temp }}/bench-vitest/metrics.json
+            ${{ runner.temp }}/bench-vitest/overhead.json
             ${{ runner.temp }}/bench-vitest/logs
           if-no-files-found: ignore

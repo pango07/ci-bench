@@ -44,6 +44,12 @@ for i in "${!commits[@]}"; do
   git checkout -q --force "$c"
   nl=$(sha1sum pnpm-lock.yaml 2>/dev/null | cut -c1-40)
   install_ms=0
+  # CI cost and CI fast count the install each CI job does: a fresh install
+  # from the warm store per commit (FRESH_INSTALL=0: only when the lockfile changed).
+  if [ "${FRESH_INSTALL:-1}" = 1 ]; then
+    find . -name node_modules -type d -prune -exec rm -rf {} +
+    lock=
+  fi
   if [ "$nl" != "$lock" ]; then
     s=$(ms)
     PUPPETEER_SKIP_DOWNLOAD=true pnpm install --frozen-lockfile --prefer-offline >"$out/logs/install-$i.log" 2>&1 || echo "install failed at $c"
@@ -77,6 +83,7 @@ for i in "${!commits[@]}"; do
       shared_changed: s.shared_inputs_changed, unrecordable: s.unrecordable,
       select_ms: s.select_ms, record_ms: s.record_ms, vitest_ms: s.vitest_ms, driver: s.driver,
       narrowed: s.narrowed, narrow: s.narrow, shared_changed_keys: s.shared_changed_keys,
+      provisional: s.provisional, promoted: s.promoted, disagreed: s.witness_disagreed,
       files: k.files, wrong: k.wrong ?? null, recording: k.recording ?? null, compare_error: k.error }))
   ' "$i" "$c" "$subject" "$touched" "$areas" "$p_ms" "$p_rc" "$q_ms" "$q_rc" "$install_ms" "$cmp" "$out/summary.json" | tee -a "$out/results.jsonl"
 
@@ -89,6 +96,7 @@ for i in "${!commits[@]}"; do
     if [ -n "$target" ]; then
       mfile=${target% *}; mline=${target##* }
       what=$(node "$proj/node_modules/.quod-vitest/narrow.mjs" mutate "$mfile" "$mline" 2>&1)
+      rm -rf "$state.pre-mutation"; cp -a "$state" "$state.pre-mutation"
       plain "m$i" >/dev/null
       read -r mq_ms mq_rc < <(quod "m$i")
       mcmp=$(node "$here/compare.mjs" "$out/plain.json" "$out/quod.json" "$state/out.json" 2>&1 | tee "$out/logs/compare-m$i.log" | tail -1)
@@ -102,11 +110,15 @@ for i in "${!commits[@]}"; do
           plain_failed_files: failedFiles, wrong: k.wrong ?? null, recording: k.recording ?? null }))
       ' "$i" "$target" "$what" "$mq_rc" "$mcmp" "$out/summary.json" "$out/plain.json" | tee -a "$out/results.jsonl"
       git checkout -q --force "$c"
-      quod "r$i" >/dev/null
+      # Back to the ledger as it was before the mutation (no extra recording
+      # run: under the second-witness policy that would be a free witness).
+      rm -rf "$state"; mv "$state.pre-mutation" "$state"
     fi
   fi
 done
-node "$here/report.mjs" "$out/results.jsonl" "${args[*]}" "$(git remote get-url origin)" > "$out/report.md"
+node "$here/ci-metrics.mjs" "$out/results.jsonl" "$out" > "$out/ci.md"
+node "$here/report.mjs" "$out/results.jsonl" "${args[*]}" "$(git remote get-url origin)" > "$out/report.body.md"
+cat "$out/ci.md" "$out/report.body.md" > "$out/report.md"
 cat "$out/report.md"
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$out/report.md" >> "$GITHUB_STEP_SUMMARY"
 # Loud: a wrong replay, or a recorded run that differs from plain (the

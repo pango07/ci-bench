@@ -121,6 +121,11 @@ for i in "${!commits[@]}"; do
     [ "$verdict" = done ] && mv -f "$out/quod.json" "$out/plan.json"
     rm -f "$out/quod.json"
     lock=
+  elif [ "${FRESH_INSTALL:-1}" = 1 ]; then
+    # CI cost and CI fast count the install each job does (the check job's
+    # and the shadow job's): a fresh install from the warm store per commit.
+    find . -name node_modules -type d -prune -exec rm -rf {} +
+    lock=
   fi
   if [ "$nl" != "$lock" ]; then
     s=$(ms)
@@ -216,7 +221,9 @@ for i in "${!commits[@]}"; do
     fi
   fi
 done
-node "$here/report-shadow.mjs" "$out/results.jsonl" "${args[*]}" "$(git remote get-url origin)" "$lag" "$audits" > "$out/report.md"
+node "$here/ci-metrics.mjs" "$out/results.jsonl" "$out" > "$out/ci.md"
+node "$here/report-shadow.mjs" "$out/results.jsonl" "${args[*]}" "$(git remote get-url origin)" "$lag" "$audits" > "$out/report.body.md"
+cat "$out/ci.md" "$out/report.body.md" > "$out/report.md"
 cat "$out/report.md"
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$out/report.md" >> "$GITHUB_STEP_SUMMARY"
 # Loud: a wrong replay on the critical path (or a mutation it missed) fails the job.
