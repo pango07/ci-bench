@@ -110,6 +110,9 @@ jobs:
           uv venv -q -p "$PYV" /work/venv
           uv pip install -q -p /work/venv/bin/python -e . ${INSTALL//,/ }
           /work/venv/bin/python --version
+      - name: plugin unit tests (scripts/pytest/dev, the plugin's pure functions)
+        if: env.MODE != 'probe'
+        run: /work/venv/bin/python -m pytest -q -p no:cacheprovider scripts/pytest/dev/test_quod_pytest.py
       - name: summary header
         if: env.MODE != 'probe'
         run: |

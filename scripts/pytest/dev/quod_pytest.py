@@ -621,6 +621,9 @@ class Recorder:
         if self.loading and p.endswith(".py"):
             w.reads["m:" + p] = None
             return
+        if p.endswith(".py") and _caller().startswith("_pytest.assertion"):
+            w.reads["m:" + p] = None
+            return
         if _display_read():
             return
         base = os.path.basename(p)
@@ -1479,6 +1482,61 @@ def changed_functions(old_src, new_src):
     return out or None
 
 
+_VERSION_NAMES = ("__version__", "VERSION", "version", "__VERSION__", "VERSION_STRING")
+
+
+def version_only(old_src, new_src):
+    """The names of module-level version constants (`VERSION = "1.2"`) when
+    they are the only difference between the two sources, else None."""
+    try:
+        trees = [ast.parse(old_src), ast.parse(new_src)]
+        compile(new_src, "<quod>", "exec")
+    except Exception:
+        return None
+    vals = []
+    for t in trees:
+        v = {}
+        for node in t.body:
+            if (
+                isinstance(node, (ast.Assign, ast.AnnAssign))
+                and isinstance(getattr(node, "value", None), ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if len(targets) == 1 and isinstance(targets[0], ast.Name) and targets[0].id in _VERSION_NAMES:
+                    v[targets[0].id] = node.value.value
+                    node.value = ast.Constant(value="<version>")
+        vals.append(v)
+    if ast.dump(trees[0]) != ast.dump(trees[1]):
+        return None
+    names = {n for n in set(vals[0]) | set(vals[1]) if vals[0].get(n) != vals[1].get(n)}
+    if not names:
+        return None
+    return names, {vals[0].get(n) for n in names} | {vals[1].get(n) for n in names}
+
+
+def mentions(path, names, skip_defs=False):
+    """Does this file's source name any of `names` (as a word)? Unknown:
+    yes. With skip_defs, the module-level definitions themselves do not
+    count."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return True
+    return mentions_text(text, names, skip_defs)
+
+
+def mentions_text(text, names, skip_defs=False):
+    for n in names:
+        if skip_defs:
+            # `NAME = "..."` / `NAME: str = "..."` at column 0: the definition.
+            text = re.sub(r"(?m)^" + re.escape(n) + r"\s*(:[^=\n]*)?=[^\n]*$", "", text)
+        if re.search(r"(?<!\w)" + re.escape(n) + r"(?!\w)", text):
+            return True
+    return False
+
+
 def narrowable(old_src, new_src, executed):
     """True when every change from old_src to new_src lies strictly inside the
     body of a function never executed (executed: {(firstline, name)} of the
@@ -2038,11 +2096,47 @@ class Quod:
                     ch = None
                 memo[(p, old)] = ch
             if ch is None:
-                return False
+                # A release bump: only a version constant changed. Replays
+                # for a file that cannot name it: its own source, every
+                # workspace file whose code it executed and the defining
+                # module (outside the definition) do not mention the name,
+                # and its recorded results do not quote either value.
+                vo = memo.get(("v", p, old), False)
+                if vo is False:
+                    try:
+                        with open(os.path.join(OPTS["dir"], "blobs", old), "rb") as f:
+                            old_src = f.read().decode("utf-8")
+                        with open(absp(p), "rb") as f:
+                            new_src = f.read().decode("utf-8")
+                        vo = version_only(old_src, new_src)
+                    except (OSError, UnicodeDecodeError):
+                        vo = None
+                    memo[("v", p, old)] = vo
+                if vo is None:
+                    return False
+                names, values = vo
+                if mentions(absp(p), names, skip_defs=True):
+                    return False
+                paths = set(exe) | set(sess_exec) | {self._file_of_rec(r)}
+                paths.discard(p)
+                for q in paths:
+                    if q is None or mentions(absp(q), names):
+                        return False
+                res = load_results(r["id"])
+                text = json.dumps(res) if res is not None else None
+                if text is None or any(v and v in text for v in values):
+                    return False
+                continue
             executed = set(tuple(x) for x in exe.get(p, ())) | set(tuple(x) for x in sess_exec.get(p, ()))
             if ch & executed:
                 return False
         return True
+
+    def _file_of_rec(self, r):
+        for f, x in self.L["files"].items():
+            if x is r:
+                return f
+        return None
 
     def _pick_audits(self):
         n = int(OPTS.get("audits", 0) or 0)
