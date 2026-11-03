@@ -55,7 +55,6 @@ env:
   QUOD_SERVER: https://api.quodci.com
   # The public key lookups are signed with (GET /v1/keys, ed25519:11142c7cc0d0dd7f).
   QUOD_SERVER_KEY: d23312bfc239da7dcd29c651dff3aea71beb08f0b3a732dff040f461a259f9f8
-  QUOD_JOB_ID: ${{ job.check_run_id }}
 
 jobs:
   vitest:
@@ -90,6 +89,7 @@ jobs:
       - name: critical path (quod vitest --no-record --cloud)
         env:
           QUOD_JOB_NAME: critical path
+          QUOD_JOB_ID: ${{ job.check_run_id }}
         run: |
           cd "$PROJ"
           start=$(date +%s%N)
@@ -102,6 +102,7 @@ jobs:
         if: always()
         env:
           QUOD_JOB_NAME: shadow
+          QUOD_JOB_ID: ${{ job.check_run_id }}
         run: |
           cd "$PROJ"
           "$QUOD" vitest --dir "$RUNNER_TEMP/ledger" --cloud --suite "$SUITE" --audits 4 \
