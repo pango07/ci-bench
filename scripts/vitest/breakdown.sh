@@ -33,6 +33,33 @@ run() { # label, then vitest arguments
 s=$(ms); node -e '' ; echo "node -e '': $(( $(ms) - s )) ms"
 s=$(ms); node -e 'await import("vitest/node")' --input-type=module 2>/dev/null; echo "import vitest/node: $(( $(ms) - s )) ms"
 echo "one: $one"; echo "four: ${four[*]}"; echo "ten: ${ten[*]}"
+if [ -n "${QUOD:-}" ]; then
+  # The critical path itself: record everything once, then --no-record with
+  # nothing changed (all replay) and with one test file touched (one runs).
+  st=/work/state/breakdown-quod
+  rm -rf "$st"
+  "$QUOD" vitest --dir "$st" -- "${args[@]}" >"$out/logs/quod-record.log" 2>&1
+  echo "recorded: $(grep -a 'quod vitest: ran' "$out/logs/quod-record.log")"
+  crit() { # label
+    for r in $(seq 1 "$rep"); do
+      local s; s=$(ms)
+      "$QUOD" vitest --no-record --dir "$st" -- "${args[@]}" --reporter=default --reporter="$here/timing-reporter.mjs" >"$out/logs/$1-$r.log" 2>&1
+      local rc=$? d=$(( $(ms) - s ))
+      echo "{\"label\":\"$1\",\"rep\":$r,\"ms\":$d,\"exit\":$rc}" >> "$out/results.jsonl"
+      printf '%-26s rep %d %6d ms exit %d\n' "$1" "$r" "$d" "$rc"
+    done
+    sed 's/\x1b\[[0-9;]*m//g' "$out/logs/$1-$rep.log" | grep -E '^(T |   Duration| Test Files|quod vitest)' | grep -v -E '^T [0-9]+ (queued|collected|start) ' | sed 's/^/    /'
+  }
+  crit quod-allreplay
+  echo "// quod breakdown" >> "$one"
+  crit quod-one
+  NODE_OPTIONS="--cpu-prof --cpu-prof-dir=$out/profq" "$QUOD" vitest --no-record --dir "$st" -- "${args[@]}" >"$out/logs/prof-quod-one.log" 2>&1
+  echo "::group::cpu profiles, quod one"
+  node "$here/cpuprof-summary.mjs" "$out/profq" 16
+  echo "::endgroup::"
+  git checkout -q -- "$one"
+  [ "${BREAKDOWN_PLAIN:-0}" = 1 ] || exit 0
+fi
 run one "$one"
 run one-threads --pool=threads "$one"
 run four "${four[@]}"
