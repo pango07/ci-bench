@@ -26,7 +26,12 @@ const load = (p) => {
   for (const t of j.testResults ?? []) {
     // vitest's fullName joins ancestors with ' '; quod's --report joins them with ' > '
     const tests = (t.assertionResults ?? []).map((x) => `${(x.fullName ?? x.title).split(' > ').join(' ')}=${({ todo: 'skipped', pending: 'skipped' })[x.status] ?? x.status}`).sort()
-    m.set(t.name, { status: t.status, tests })
+    // A file several projects run (convex-helpers: zodVersion.test.ts in 8
+    // zod-version projects) appears once per project, in no fixed order,
+    // and the JSON report names no project: compare the whole multiset.
+    const had = m.get(t.name)
+    if (had) m.set(t.name, { status: had.status == null || t.status == null ? null : [had.status, t.status].join(',').split(',').sort().join(','), tests: [...had.tests, ...tests].sort() })
+    else m.set(t.name, { status: t.status, tests })
   }
   return m
 }
