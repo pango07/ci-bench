@@ -14,5 +14,6 @@ for spec in "$@"; do
   .venv/bin/python -m pytest -q -p no:cacheprovider >/dev/null 2>&1   # warm (pyc)
   s=$(date +%s%N); .venv/bin/python -m pytest -q -p no:cacheprovider > out.txt 2>&1; rc=$?; e=$(date +%s%N)
   echo "$repo: $(( (e - s) / 1000000 )) ms, exit $rc, $nf test files, $(tail -1 out.txt)"
+  [ $rc = 0 ] || grep -E "^E  |^ERROR" out.txt | sort | uniq -c | sort -rn | head -5 | sed "s|^|$repo err: |"
   cd /
 done
