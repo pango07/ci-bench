@@ -102,6 +102,13 @@ jobs:
           tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/quod-linux-x86_64.tar.gz"
           "$RUNNER_TEMP/quod" --version || true
           echo "BIN_TAG=$tag" >> "$GITHUB_ENV"
+          # Same-job A/B: BIN_B (through extra_env) is a second binary, QUOD_B
+          if [ -n "${BIN_B:-}" ]; then
+            mkdir -p "$RUNNER_TEMP/b"
+            gh release download "$BIN_B" -R "$GITHUB_REPOSITORY" -p 'quod-linux-x86_64.tar.gz' -D "$RUNNER_TEMP/b"
+            tar -C "$RUNNER_TEMP/b" -xzf "$RUNNER_TEMP/b/quod-linux-x86_64.tar.gz"
+            echo "QUOD_B=$RUNNER_TEMP/b/quod" >> "$GITHUB_ENV"
+          fi
       - name: checkout the project, pnpm, dependencies
         env:
           PUPPETEER_SKIP_DOWNLOAD: 'true'
