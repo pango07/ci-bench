@@ -86,9 +86,18 @@ jobs:
           git clone -q --filter=blob:none "https://github.com/$REPO" "$PROJ"
           cd "$PROJ"
           git checkout -q "$COMMIT"
+          # The ledger restore runs during the install; the critical path
+          # then uses it (a marker names this job) instead of fetching.
+          ( t0=$(date +%s%N); "$QUOD" vitest --dir "$RUNNER_TEMP/ledger" --cloud --suite "$SUITE" --cloud-only restore; \
+            echo "restore wall: $(( ($(date +%s%N) - t0) / 1000000 )) ms" ) > "$RUNNER_TEMP/restore.log" 2>&1 &
+          restore=$!
           pm=$(node -p "(require('./package.json').packageManager||'pnpm@latest').split('+')[0]")
           sudo env PATH="$PATH" npm i -g -s "$pm"
           pnpm install --frozen-lockfile
+          t1=$(date +%s%N); wait $restore; waited=$(( ($(date +%s%N) - t1) / 1000000 ))
+          cat "$RUNNER_TEMP/restore.log"
+          echo "restore wait after the install: $waited ms"
+          { echo; cat "$RUNNER_TEMP/restore.log"; echo "restore wait after the install: $waited ms"; } >> "$GITHUB_STEP_SUMMARY"
       - name: critical path (quod vitest --no-record --cloud)
         env:
           QUOD_JOB_NAME: critical path
