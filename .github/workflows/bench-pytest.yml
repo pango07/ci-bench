@@ -1,0 +1,131 @@
+# pytest on N consecutive first-parent commits of a real project: plain
+# pytest against `quod pytest --no-record` (the critical path), with the
+# recording job (the shadow) as its own column. Every commit's per-test
+# results are compared with plain's. See scripts/pytest/shadow.sh.
+#
+#   gh workflow run bench-pytest.yml -R pango07/ci-bench -f repo=pypa/packaging -f sha=<sha>
+#   gh workflow run bench-pytest.yml -R pango07/ci-bench -f mode=probe -f repo="a/b c/d=extra,pkgs"
+name: bench-pytest
+
+on:
+  workflow_dispatch:
+    inputs:
+      bin:
+        description: The runner binary, a release tag of this repo (bin-<sha>), or latest
+        required: false
+        default: latest
+      mode:
+        description: "shadow (critical path vs plain, the shadow as its own column) or probe (time candidate suites)"
+        required: false
+        default: shadow
+        type: choice
+        options: [shadow, probe]
+      repo:
+        description: The project (owner/name on GitHub)
+        required: false
+        default: pypa/packaging
+      sha:
+        description: The last commit of the window
+        required: false
+        default: main
+      commits:
+        description: How many first-parent commits
+        required: false
+        default: '20'
+      install:
+        description: "Extra packages installed with the project (uv pip install -e . <these>, comma-separated)"
+        required: false
+        default: pytest
+      pytest_args:
+        description: The project's pytest arguments (as its CI runs it)
+        required: false
+        default: ''
+      python:
+        description: Python version (uv-managed)
+        required: false
+        default: '3.12'
+      mutate:
+        description: Commit indexes that get a mutation check (space-separated)
+        required: false
+        default: 4 9 14 19
+      extra_env:
+        description: "Extra environment for the bench scripts (space-separated K=V)"
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  MODE: ${{ inputs.mode }}
+  BIN: ${{ inputs.bin }}
+  REPO: ${{ inputs.repo }}
+  SHA: ${{ inputs.sha }}
+  COMMITS: ${{ inputs.commits }}
+  INSTALL: ${{ inputs.install }}
+  PYTEST_ARGS: ${{ inputs.pytest_args }}
+  PYV: ${{ inputs.python }}
+  MUTATE: ${{ inputs.mutate }}
+  PROJ: /work/proj
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: host (/work, uv)
+        env:
+          EXTRA_ENV: ${{ inputs.extra_env }}
+        run: |
+          sudo mkdir -p /work/state /work/tmp && sudo chown "$(id -u):$(id -g)" /work /work/state /work/tmp
+          curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          for kv in $EXTRA_ENV; do echo "$kv" >> "$GITHUB_ENV"; done
+      - name: probe
+        if: env.MODE == 'probe'
+        run: bash scripts/pytest/probe.sh $REPO
+      - name: runner binary (release ${{ inputs.bin }})
+        if: env.MODE != 'probe'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$BIN
+          [ "$tag" = latest ] && tag=$(gh release view -R "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          gh release download "$tag" -R "$GITHUB_REPOSITORY" -p 'quod-linux-x86_64.tar.gz' -D "$RUNNER_TEMP"
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/quod-linux-x86_64.tar.gz"
+          "$RUNNER_TEMP/quod" --version || true
+          echo "BIN_TAG=$tag" >> "$GITHUB_ENV"
+      - name: checkout the project, venv, dependencies
+        if: env.MODE != 'probe'
+        run: |
+          git clone -q "https://github.com/$REPO" "$PROJ"
+          cd "$PROJ"
+          git checkout -q "$SHA"
+          echo "SHA_FULL=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          uv venv -q -p "$PYV" /work/venv
+          uv pip install -q -p /work/venv/bin/python -e . ${INSTALL//,/ }
+          /work/venv/bin/python --version
+      - name: summary header
+        if: env.MODE != 'probe'
+        run: |
+          {
+            echo "**${REPO}** at \`${SHA_FULL:0:9}\`, ${COMMITS} commits, mode \`${MODE}\`, binary \`${BIN_TAG}\`, pytest args \`${PYTEST_ARGS}\`."
+            echo "Runner: \`ubuntu-latest\` ($(. /etc/os-release && echo "$PRETTY_NAME"), $(nproc) CPUs), $(/work/venv/bin/python --version). Run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: shadow
+        if: env.MODE == 'shadow'
+        env:
+          QUOD: ${{ runner.temp }}/quod
+          PY: /work/venv/bin/python
+        run: bash scripts/pytest/shadow.sh "$PROJ" "$SHA_FULL" "$COMMITS" $PYTEST_ARGS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && env.MODE != 'probe'
+        with:
+          name: bench-pytest-${{ inputs.mode }}
+          path: |
+            ${{ runner.temp }}/bench-pytest/report.md
+            ${{ runner.temp }}/bench-pytest/*.jsonl
+            ${{ runner.temp }}/bench-pytest/logs
+          if-no-files-found: ignore
