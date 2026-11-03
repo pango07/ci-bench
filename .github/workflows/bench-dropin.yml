@@ -105,6 +105,7 @@ jobs:
             ${{ runner.temp }}/dropin/ci.md
             ${{ runner.temp }}/dropin/metrics.json
             ${{ runner.temp }}/dropin/results.jsonl
+            ${{ runner.temp }}/dropin/pr.txt
             ${{ runner.temp }}/dropin/logs
           if-no-files-found: ignore
 

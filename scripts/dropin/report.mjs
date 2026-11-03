@@ -71,6 +71,7 @@ const row = {
   setup_failing_commits: setupFail,
   quod_check_log_sample: rows.find((r) => !r.first)?.quod_check_log ?? '',
   quod_shadow_log_sample: rows.find((r) => !r.first)?.quod_shadow_log ?? '',
+  pull_request_check: (() => { try { return fs.readFileSync(path.join(outDir, 'pr.txt'), 'utf8').trim() } catch { return '' } })(),
   run: process.env.GITHUB_RUN_ID ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}` : '',
 }
 fs.writeFileSync(path.join(outDir, 'row.json'), JSON.stringify(row, null, 1))
@@ -89,4 +90,5 @@ for (const r of rows) {
 }
 o.push('')
 for (const r of rows) for (const w of r.wrong_detail ?? []) o.push(`- WRONG at ${r.i}: ${w.file} plain=${w.plain} check=${w.check} -${JSON.stringify(w.minus)} +${JSON.stringify(w.plus)}`)
+if (row.pull_request_check) o.push(`\n${row.pull_request_check}`)
 console.log(o.join('\n'))

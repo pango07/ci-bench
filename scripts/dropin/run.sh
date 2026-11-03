@@ -72,7 +72,11 @@ runtest() { # tag, commit index -> "ms rc"
   local tag=$1 i=$2 s rc
   clean_caches
   s=$(ms)
-  (cd "$proj/${DROPIN_WORKDIR:-.}" && bash -c "$DROPIN_TEST") >"$out/logs/$tag-$i.log" 2>&1
+  # Each run is its own CI job: the per-job and per-run variables GitHub sets
+  # differ (the commit, the run, the job, the runner).
+  (cd "$proj/${DROPIN_WORKDIR:-.}" && GITHUB_SHA=$(git rev-parse HEAD) GITHUB_RUN_ID=$((4100000000 + i)) GITHUB_RUN_NUMBER=$((100 + i)) \
+    GITHUB_JOB=$([ "$tag" = shadow ] && echo record || echo test) RUNNER_TRACKING_ID="github_$tag-$i-$RANDOM" RUNNER_NAME="GitHub Actions $RANDOM" \
+    env ${DROPIN_RUN_ENV:-} bash -c "$DROPIN_TEST") >"$out/logs/$tag-$i.log" 2>&1
   rc=$?
   local d=$(( $(ms) - s ))
   mkdir -p "$out/runs/$i/$tag"; cp -a "$D/cur/." "$out/runs/$i/$tag/" 2>/dev/null
@@ -140,6 +144,19 @@ for i in "${!commits[@]}"; do
   ' "$i" "$c" "$(git log -1 --format=%s "$c")" "$p_ms" "$p_rc" "$q_ms" "$q_rc" "$sh_ms" "$sh_rc" "$install_ms" "$build_ms" "$irc" "$brc" "$recorded" "$cmp" "$quodlines" "$shlines" | tee -a "$out/results.jsonl"
   echo "::endgroup::"
 done
+# The pull-request case: a PR's first commit restores the default branch's
+# newest recording. The last commit's check again, against the last
+# recording, with the variables a pull_request job has.
+if [ $active = 1 ]; then
+  last=$(( ${#commits[@]} - 1 ))
+  setmode check; ledger_from "$last"; rm -rf "$Q/reports"; mkdir -p "$Q/reports"
+  DROPIN_RUN_ENV="GITHUB_EVENT_NAME=pull_request GITHUB_REF=refs/pull/1/merge GITHUB_REF_NAME=1/merge GITHUB_HEAD_REF=dropin-pr GITHUB_BASE_REF=${GITHUB_REF_NAME:-main}" \
+    runtest pr "$last" >/dev/null
+  mkdir -p "$out/runs/$last/check-out-pr"
+  for f in "$L"/*/out.json; do [ -f "$f" ] && cp "$f" "$out/runs/$last/check-out-pr/"; done
+  pr=$(grep -h -E '^quod vitest: (ran|every file)|shared input changed' "$out/logs/pr-$last.log" | head -5 | tr '\n' '|')
+  echo "pull_request check of the last commit against its own push recording: $pr" | tee "$out/pr.txt"
+fi
 # Nothing for the action's post step to upload (its artifact name is the
 # same in every matrix job).
 rm -rf "$Q/reports"
