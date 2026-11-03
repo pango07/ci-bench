@@ -22,7 +22,9 @@ const intercepted = sum(timed.map((r) => r.intercepted))
 const files = sum(timed.map((r) => r.files))
 const replayed = sum(timed.map((r) => r.replayed))
 const wrong = rows.reduce((n, r) => n + (r.wrong === null ? 1 : r.wrong.length), 0)
-const exitMismatch = rows.filter((r) => r.plain_exit !== r.crit_exit).map((r) => r.i)
+// An exit difference explained by a test that ran (not replayed) and flaked is plain vitest's flakiness, not Quod's.
+const exitMismatch = rows.filter((r) => r.plain_exit !== r.crit_exit && !(r.flaky?.length && !r.wrong?.length)).map((r) => r.i)
+const flakyCommits = rows.filter((r) => r.flaky?.length).map((r) => r.i)
 const recordedMax = Math.max(0, ...rows.map((r) => r.recorded))
 const declined = [...new Set(rows.flatMap((r) => r.declined))]
 const missing = [...new Set(rows.flatMap((r) => r.missing))]
@@ -59,6 +61,7 @@ const row = {
   ci_fast_x_median: t.fast_x_median ?? null,
   ci_cost_x_measured_only: t.cost_x_measured_only ?? null,
   wrong_replays: wrong,
+  flaky_commits: flakyCommits,
   invocations_per_commit: timed.length ? +(invocations / timed.length).toFixed(1) : 0,
   intercepted,
   invocations,
