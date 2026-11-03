@@ -158,20 +158,29 @@ for i in "${!commits[@]}"; do
   fi
   recorded=$(QUOD_SHIM_ACTIVE=1 "$REAL" -e 'let n=0;for(const f of process.argv.slice(1)){try{n+=Object.keys(JSON.parse(require("fs").readFileSync(f,"utf8")).files||{}).length}catch{}}console.log(n)' "$L"/*/ledger.json)
   cmp=$(QUOD_SHIM_ACTIVE=1 "$REAL" "$here/compare.mjs" "$out/runs/$i" 2>"$out/logs/compare-$i.err")
+  pc=$(QUOD_SHIM_ACTIVE=1 "$REAL" "$here/counts.mjs" "$out/logs/plain-$i.log"); qc=$(QUOD_SHIM_ACTIVE=1 "$REAL" "$here/counts.mjs" "$out/logs/check-$i.log")
   quodlines=$(grep -h -oE 'quod( vitest)?:.*' "$out/logs/check-$i.log" | grep -vE '(GITHUB|RUNNER|ACTIONS)_[A-Z_]* keyed for every' | sort | uniq -c | sort -rn | head -6 | sed 's/^ *//' | tr '\n' '|')
   shlines=$(grep -h -oE 'quod( vitest)?:.*' "$out/logs/shadow-$i.log" 2>/dev/null | grep -vE '(GITHUB|RUNNER|ACTIONS)_[A-Z_]* keyed for every' | sort | uniq -c | sort -rn | head -6 | sed 's/^ *//' | tr '\n' '|')
   DROPIN_MODE_EFF=$mode QUOD_SHIM_ACTIVE=1 "$REAL" -e '
-    const [i, c, subject, p_ms, p_rc, q_ms, q_rc, sh_ms, sh_rc, install_ms, build_ms, irc, brc, recorded, cmp, ql, sl] = process.argv.slice(1)
+    const [i, c, subject, p_ms, p_rc, q_ms, q_rc, sh_ms, sh_rc, install_ms, build_ms, irc, brc, recorded, cmp, ql, sl, pc, qc] = process.argv.slice(1)
     let k; try { k = JSON.parse(cmp) } catch { k = { error: cmp || "compare failed" } }
+    // Where the Quod run left no per-test report, its per-state counts against plain.
+    const P = JSON.parse(pc), Q = JSON.parse(qc)
+    const countsMatch = JSON.stringify(P.files) === JSON.stringify(Q.files) && JSON.stringify(P.tests) === JSON.stringify(Q.tests)
+    const noReport = (k.missing ?? []).filter((m) => /no check report/.test(m))
+    if (noReport.length && !k.error) {
+      k.missing = k.missing.filter((m) => !/no check report/.test(m))
+      if (!countsMatch) k.wrong.push({ file: "(counts)", plain: JSON.stringify(P), check: JSON.stringify(Q), minus: [], plus: [] })
+    }
     const row = { i: +i, first: i === "0", commit: c, subject,
       plain_ms: +p_ms, plain_exit: +p_rc, ...(process.env.DROPIN_MODE_EFF === "witness" ? { quod_ms: +q_ms, quod_exit: +q_rc, mode: "witness" } : { crit_ms: +q_ms, crit_exit: +q_rc, shadow_ms: +sh_ms, shadow_exit: +sh_rc, mode: "shadow" }),
       install_ms: +install_ms + +build_ms, install_only_ms: +install_ms, build_ms: +build_ms, install_rc: +irc, build_rc: +brc,
       recorded: +recorded, invocations: k.invocations ?? 0, intercepted: k.intercepted ?? 0, files: k.files ?? 0, ran: k.ran ?? 0, replayed: k.replayed ?? 0,
       wrong: k.error ? null : k.wrong.map((w) => w.file), wrong_detail: k.wrong, flaky: k.flaky?.map((w) => w.file) ?? null, flaky_detail: k.flaky,
-      check_from_quod_report: k.check_from_quod_report ?? 0, missing: k.missing ?? [], declined: k.declined ?? [], shadow_diff: k.shadow_diff ?? [], per_key: k.per_key, compare_error: k.error,
+      check_from_quod_report: k.check_from_quod_report ?? 0, compared_by_counts: noReport.length, counts_plain: P, counts_check: Q, counts_match: countsMatch, missing: k.missing ?? [], declined: k.declined ?? [], shadow_diff: k.shadow_diff ?? [], per_key: k.per_key, compare_error: k.error,
       quod_check_log: ql, quod_shadow_log: sl }
     console.log(JSON.stringify(row))
-  ' "$i" "$c" "$(git log -1 --format=%s "$c")" "$p_ms" "$p_rc" "$q_ms" "$q_rc" "$sh_ms" "$sh_rc" "$install_ms" "$build_ms" "$irc" "$brc" "$recorded" "$cmp" "$quodlines" "$shlines" | tee -a "$out/results.jsonl"
+  ' "$i" "$c" "$(git log -1 --format=%s "$c")" "$p_ms" "$p_rc" "$q_ms" "$q_rc" "$sh_ms" "$sh_rc" "$install_ms" "$build_ms" "$irc" "$brc" "$recorded" "$cmp" "$quodlines" "$shlines" "$pc" "$qc" | tee -a "$out/results.jsonl"
   echo "::endgroup::"
 done
 # The pull-request case: a PR's first commit restores the default branch's
