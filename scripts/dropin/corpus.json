@@ -9,7 +9,8 @@
     "install": "npm ci --ignore-scripts",
     "build": "npm run build",
     "test": "npm run test:vitest:unit",
-    "shadow_with": "install: npm ci --ignore-scripts; test: npm run build && npm run test:vitest:unit; node-version: 26.x (cache npm is the default)"
+    "shadow_with": "install: npm ci --ignore-scripts; test: npm run build && npm run test:vitest:unit; node-version: 26.x (cache npm is the default)",
+    "twojob": "no (estimated): setup-node's registry-url adds NODE_AUTH_TOKEN and NPM_CONFIG_USERCONFIG to the test job only (NODE_* is tool environment); also runs on a namespace.so runner label"
   },
   {
     "id": "convex-helpers",
@@ -21,7 +22,8 @@
     "install": "npm ci",
     "build": "npm run build",
     "test": "npm run test",
-    "shadow_with": "test: npm run build && npm run test; node-version: 24.18.0 (no node-version-file input)"
+    "shadow_with": "test: npm run build && npm run test; node-version: 24.18.0 (no node-version-file input)",
+    "twojob": "likely (estimated): setup-node from .nvmrc can be mirrored with node-version 24.18.0; the build must be prepended to `test`"
   },
   {
     "id": "t3-env",
@@ -35,7 +37,8 @@
     "install": "bun install",
     "build": "bun run build --filter=@t3-oss/env*",
     "test": "bun run test",
-    "shadow_with": "not expressible: shadow.yml has no setup-bun step (install: bun install fails without bun on the runner)"
+    "shadow_with": "not expressible: shadow.yml has no setup-bun step (install: bun install fails without bun on the runner)",
+    "twojob": "no: setup-bun puts bun on the test job's PATH; shadow.yml cannot install with bun; FORCE_COLOR=3 is workflow env (a called workflow never gets it: measured on the fixture, variant npm-env)"
   },
   {
     "id": "resolvers",
@@ -47,7 +50,8 @@
     "install": "bun install",
     "build": "",
     "test": "bun run test",
-    "shadow_with": "not expressible: shadow.yml has no setup-bun step"
+    "shadow_with": "not expressible: shadow.yml has no setup-bun step",
+    "twojob": "no: bun-only job; shadow.yml has no bun"
   },
   {
     "id": "immer",
@@ -60,7 +64,8 @@
     "build": "",
     "test": "yarn test && yarn coverage",
     "shadow_with": "install: yarn --frozen-lockfile; cache: yarn; test: yarn test && yarn coverage",
-    "probe": "yarn run env | grep -E \"^PATH=\" | cut -c1-300; yarn run env | grep -c quod || true"
+    "probe": "yarn run env | grep -E \"^PATH=\" | cut -c1-300; yarn run env | grep -c quod || true",
+    "twojob": "no: yarn's script node wrapper bypasses the shim (nothing to record either way)"
   },
   {
     "id": "yup",
@@ -74,7 +79,8 @@
     "build": "",
     "test": "yarn test",
     "shadow_with": "install: corepack enable && yarn install --frozen-lockfile; cache: '' (setup-node's yarn cache needs corepack first)",
-    "probe": "yarn exec 'command -v node; echo $PATH | cut -c1-300'"
+    "probe": "yarn exec 'command -v node; echo $PATH | cut -c1-300'",
+    "twojob": "no: yarn's script node wrapper bypasses the shim"
   },
   {
     "id": "outline",
@@ -90,7 +96,8 @@
     "env": "NODE_ENV=test DATABASE_URL=postgres://postgres:password@localhost:5432/outline_test REDIS_URL=redis://127.0.0.1:6379 URL=http://localhost:3000 NODE_OPTIONS=--max-old-space-size=8192 SECRET_KEY=F0E5AD933D7F6FD8F4DBB3E038C501C052DC0593C686D21ACB30AE205D2F634B UTILS_SECRET=123456 SLACK_VERIFICATION_TOKEN=123456 SMTP_USERNAME=localhost",
     "commits": 8,
     "shadow_with": "not expressible as-is: corepack must run before setup-node; the workflow-level env must be repeated (no env input)",
-    "probe": "yarn exec 'command -v node; echo $PATH | cut -c1-300'"
+    "probe": "yarn exec 'command -v node; echo $PATH | cut -c1-300'",
+    "twojob": "no: yarn's script node wrapper bypasses the shim; workflow env (NODE_ENV, NODE_OPTIONS, ...) never reaches a called workflow"
   },
   {
     "id": "pinia",
@@ -103,7 +110,8 @@
     "install": "pnpm install --frozen-lockfile",
     "build": "pnpm run -r dev:prepare",
     "test": "pnpm run test:vitest",
-    "shadow_with": "not expressible: shadow.yml has no pnpm setup step (pnpm is not on the runner; setup-node cache: pnpm fails without it)"
+    "shadow_with": "install: corepack enable pnpm && pnpm install --frozen-lockfile; cache: ''; test: pnpm run -r dev:prepare && pnpm run test:vitest",
+    "twojob": "no: --coverage keeps the step plain; no: pnpm/action-setup puts pnpm's directory on the test job's PATH and pnpm sets NODE_PATH; shadow.yml has neither (pnpm only via corepack in `install`), so env:PATH, env:NODE_PATH and envtool: differ and every file runs (measured on fixtures/dropin-twojob, variant pnpm)"
   },
   {
     "id": "reselect",
@@ -116,7 +124,8 @@
     "install": "pnpm install --frozen-lockfile",
     "build": "node scripts/writeGitVersion.mjs $(git rev-parse --short HEAD)",
     "test": "pnpm test",
-    "shadow_with": "not expressible: no pnpm setup step in shadow.yml"
+    "shadow_with": "install: corepack enable pnpm && pnpm install --frozen-lockfile; cache: ''; test: node scripts/writeGitVersion.mjs $(git rev-parse --short HEAD) && pnpm test",
+    "twojob": "no: pnpm/action-setup puts pnpm's directory on the test job's PATH and pnpm sets NODE_PATH; shadow.yml has neither (pnpm only via corepack in `install`), so env:PATH, env:NODE_PATH and envtool: differ and every file runs (measured on fixtures/dropin-twojob, variant pnpm)"
   },
   {
     "id": "tanstack-store",
@@ -131,8 +140,9 @@
     "test": "pnpm run test:ci",
     "env": "NX_NO_CLOUD=true NX_SKIP_NX_CACHE=true NX_DAEMON=false",
     "commits": 10,
-    "shadow_with": "not expressible: no pnpm setup step; the real PR job runs tests on Nx Cloud agents, never on the runner Quod is on",
-    "probe_disable": true
+    "shadow_with": "install: corepack enable pnpm && <their install>; cache: '' (pnpm/action-setup has no counterpart in shadow.yml; setup-node's pnpm cache needs pnpm first); the real PR job runs tests on Nx Cloud agents, never on the runner Quod is on",
+    "probe_disable": true,
+    "twojob": "no: pnpm/action-setup puts pnpm's directory on the test job's PATH and pnpm sets NODE_PATH; shadow.yml has neither (pnpm only via corepack in `install`), so env:PATH, env:NODE_PATH and envtool: differ and every file runs (measured on fixtures/dropin-twojob, variant pnpm)"
   },
   {
     "id": "vercel-ai",
@@ -147,9 +157,10 @@
     "test": "pnpm test:ci",
     "env": "TURBO_FORCE=true TURBO_TELEMETRY_DISABLED=1",
     "commits": 8,
-    "shadow_with": "not expressible: no pnpm setup step; the build (turbo, remote-cached in their CI) must be prepended to test",
+    "shadow_with": "install: corepack enable pnpm && pnpm install --frozen-lockfile; cache: ''; test: pnpm run build:packages && pnpm test:ci (the build, remote-cached by turbo in their CI, reruns)",
     "probe": "pnpm exec turbo --version",
-    "probe_disable": true
+    "probe_disable": true,
+    "twojob": "no: pnpm/action-setup puts pnpm's directory on the test job's PATH and pnpm sets NODE_PATH; shadow.yml has neither (pnpm only via corepack in `install`), so env:PATH, env:NODE_PATH and envtool: differ and every file runs (measured on fixtures/dropin-twojob, variant pnpm)"
   },
   {
     "id": "zustand",
@@ -162,7 +173,8 @@
     "install": "pnpm install",
     "build": "",
     "test": "pnpm run test:spec",
-    "shadow_with": "not expressible: no pnpm setup step"
+    "shadow_with": "install: corepack enable pnpm && <their install>; cache: '' (pnpm/action-setup has no counterpart in shadow.yml; setup-node's pnpm cache needs pnpm first)",
+    "twojob": "no: pnpm/action-setup puts pnpm's directory on the test job's PATH and pnpm sets NODE_PATH; shadow.yml has neither (pnpm only via corepack in `install`), so env:PATH, env:NODE_PATH and envtool: differ and every file runs (measured on fixtures/dropin-twojob, variant pnpm)"
   },
   {
     "id": "shiki",
@@ -175,7 +187,8 @@
     "install": "npm i -g @antfu/ni && nci",
     "build": "nr build",
     "test": "nr test --coverage",
-    "shadow_with": "not expressible: no pnpm setup step"
+    "shadow_with": "install: npm i -g @antfu/ni && corepack enable pnpm && nci; cache: ''; test: nr build && nr test --coverage",
+    "twojob": "no: --coverage keeps the step plain; no: pnpm/action-setup puts pnpm's directory on the test job's PATH and pnpm sets NODE_PATH; shadow.yml has neither (pnpm only via corepack in `install`), so env:PATH, env:NODE_PATH and envtool: differ and every file runs (measured on fixtures/dropin-twojob, variant pnpm)"
   },
   {
     "id": "mcp-sdk",
@@ -188,7 +201,8 @@
     "install": "pnpm install",
     "build": "",
     "test": "pnpm -r --filter '!@modelcontextprotocol/test-e2e' test",
-    "shadow_with": "not expressible: no pnpm setup step",
-    "probe_disable": true
+    "shadow_with": "install: corepack enable pnpm && <their install>; cache: '' (pnpm/action-setup has no counterpart in shadow.yml; setup-node's pnpm cache needs pnpm first)",
+    "probe_disable": true,
+    "twojob": "no: pnpm/action-setup puts pnpm's directory on the test job's PATH and pnpm sets NODE_PATH; shadow.yml has neither (pnpm only via corepack in `install`), so env:PATH, env:NODE_PATH and envtool: differ and every file runs (measured on fixtures/dropin-twojob, variant pnpm)"
   }
 ]
