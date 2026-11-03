@@ -2724,11 +2724,12 @@ def certify(plugin, todo, files, summary):
         alone = (out or {}).get("tests")
         deps = (out or {}).get("deps") or {}
         ok = alone is not None and {k: norm_text(v) for k, v in alone.items()} == session
+        unknown = alone is None
         if ok and (not deps or "error" in deps):
-            ok = False
+            ok, unknown = False, True
             summary["not_recorded"][f] = "the alone run recorded nothing: %s" % deps.get("error")
         if ok and deps.get("unrecordable"):
-            ok = False
+            ok, unknown = False, True
             rec["unrecordable"] = "alone: " + deps["unrecordable"]
         if ok:
             # Inputs: the union of what the file used in the session and alone.
@@ -2750,7 +2751,10 @@ def certify(plugin, todo, files, summary):
                 cur |= set(tuple(x) for x in fns)
                 rec["exec"][pth] = sorted(cur)
             rec["modules"] = sorted(set(rec.get("modules") or ()) | set(deps["modules"]))
-        rec["certified"] = bool(ok)
+        # False only for a file whose results alone differ from the session's
+        # (order-dependent: it runs with every file before it); None when
+        # unknown (it runs, alone).
+        rec["certified"] = True if ok else (None if unknown else False)
         if ok:
             summary["certified"] += 1
         else:
