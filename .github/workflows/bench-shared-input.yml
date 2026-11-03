@@ -1,0 +1,90 @@
+# Over-broad shared inputs: a Convex-shaped vitest project
+# (scripts/shared-input/make-repo.sh) whose commits replay class-management
+# PR #277's shape (a new convex/lib file under tests/helpers.ts's
+# import.meta.glob), run through scripts/vitest/shadow.sh with two binaries,
+# one job each: plain vitest against the critical path per commit, every
+# replay compared with plain per test.
+#
+#   gh workflow run bench-shared-input.yml -R pango07/ci-bench -f before=bin-0ea22e0 -f after=bin-d87bcba
+name: bench-shared-input
+
+on:
+  workflow_dispatch:
+    inputs:
+      before:
+        description: The binary before the change (release tag)
+        required: false
+        default: bin-0ea22e0
+      after:
+        description: The binary after the change (release tag)
+        required: false
+        default: bin-d87bcba
+      node:
+        description: Node.js version
+        required: false
+        default: 24.22.2
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        side: [before, after]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      NODE_VERSION: ${{ inputs.node }}
+      PROJ: /work/proj
+      TAG: ${{ matrix.side == 'before' && inputs.before || inputs.after }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: host
+        run: bash scripts/host-setup.sh
+      - name: binary ${{ env.TAG }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p 'quod-linux-x86_64.tar.gz' -D "$RUNNER_TEMP"
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/quod-linux-x86_64.tar.gz"
+      - name: fixture
+        run: |
+          echo /usr/local/node/bin >> "$GITHUB_PATH"
+          export PATH=/usr/local/node/bin:$PATH
+          bash scripts/shared-input/make-repo.sh "$PROJ"
+          cd "$PROJ"
+          npm install --no-audit --no-fund --loglevel=error
+          node -p "'vitest ' + require('vitest/package.json').version + ', vite ' + require('vite/package.json').version"
+      - name: who lists convex/ in vitest's main process (base commit)
+        run: |
+          cd "$PROJ"
+          git checkout -q --force HEAD~7
+          DIAG_DIR=/convex node --import "$GITHUB_WORKSPACE/scripts/shared-input/diag.mjs" node_modules/vitest/vitest.mjs run 2>&1 | grep '^DIAG' | tee "$RUNNER_TEMP/diag.txt" || true
+          git checkout -q --force main
+      - name: shadow bench (${{ matrix.side }})
+        env:
+          QUOD: ${{ runner.temp }}/quod
+          OBSERVE: '0'
+          MUTATE: none
+        run: bash scripts/vitest/shadow.sh "$PROJ" main 7 run
+      - name: report
+        if: always()
+        run: |
+          {
+            node scripts/shared-input/report.mjs "$RUNNER_TEMP/bench-vitest/results.jsonl" "${{ matrix.side }}: $TAG"
+            echo; echo '<details><summary>main-process listings of convex/ (base commit)</summary>'; echo; echo '```'
+            cat "$RUNNER_TEMP/diag.txt" 2>/dev/null | cut -c1-400
+            echo '```'; echo '</details>'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -h 'shared input changed\|keyed per module\|recorded files' "$RUNNER_TEMP"/bench-vitest/logs/crit-*.log "$RUNNER_TEMP"/bench-vitest/logs/shadow-*.log | sort | uniq -c | head -40 || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: shared-input-${{ matrix.side }}
+          path: |
+            ${{ runner.temp }}/bench-vitest/results.jsonl
+            ${{ runner.temp }}/bench-vitest/logs
+            ${{ runner.temp }}/diag.txt
+          if-no-files-found: ignore
