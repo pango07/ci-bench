@@ -1,0 +1,64 @@
+# Quod's real two-job set-up, exactly as its README has a customer add it:
+# the test job with pango07/quod-action, and the shadow as quod-action's
+# reusable workflow (shadow.yml), on fixtures/dropin-twojob, per variant of
+# how the test job is set up. Dispatch twice on the same branch: the second
+# run's test job replays what the first run's shadow recorded, or says why
+# not (the job log: "shared input changed: ...").
+#
+#   variant npm      setup-node, npm install, npm test (the shadow can mirror it)
+#   variant pnpm     pnpm/action-setup before setup-node (shadow.yml has no such step:
+#                    install there is `corepack enable pnpm && pnpm install`)
+#   variant npm-env  as npm, plus FORCE_COLOR=3 TZ=UTC in the test job's
+#                    environment (a reusable workflow never gets the caller's env)
+#
+# Use one branch per variant (the ledger's Actions cache key is per branch):
+#   gh workflow run dropin-twojob.yml -R pango07/ci-bench --ref dropin-npm -f variant=npm
+# No `id-token: write`: the ledger goes through the Actions cache, not Quod Cloud.
+name: dropin-twojob
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        type: choice
+        options: [npm, pnpm, npm-env]
+        default: npm
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fixtures/dropin-twojob
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+        if: inputs.variant == 'pnpm'
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pango07/quod-action@0d639e9a85fde5f27f06d44811332a6f0fb6fe1e # v1
+      - name: the test job's own environment (npm-env)
+        if: inputs.variant == 'npm-env'
+        working-directory: .
+        run: printf 'FORCE_COLOR=3\nTZ=UTC\n' >> "$GITHUB_ENV"
+      - run: ${{ inputs.variant == 'pnpm' && 'pnpm install' || 'npm install' }}
+      - run: ${{ inputs.variant == 'pnpm' && 'pnpm test' || 'npm test' }}
+
+  quod-shadow:
+    needs: check
+    permissions:
+      contents: read
+    uses: pango07/quod-action/.github/workflows/shadow.yml@0d639e9a85fde5f27f06d44811332a6f0fb6fe1e # v1
+    with:
+      test: ${{ inputs.variant == 'pnpm' && 'pnpm test' || 'npm test' }}
+      install: ${{ inputs.variant == 'pnpm' && 'corepack enable pnpm && pnpm install' || 'npm install' }}
+      cache: ''
+      working-directory: fixtures/dropin-twojob
