@@ -141,6 +141,9 @@ jobs:
       - name: the action (one line)
         if: env.QUOD_ACTION_REF != ''
         uses: ./.quod-action
+        env:
+          # this job's $RUNNER_TEMP/quod is the bench's own quod binary
+          RUNNER_TEMP: ${{ runner.temp }}/action
         with:
           version: ${{ env.BIN_TAG }}
           cloud: 'false'
