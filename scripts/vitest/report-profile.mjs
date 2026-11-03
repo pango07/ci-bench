@@ -36,4 +36,16 @@ for (const kind of ['full', 'typical']) {
     console.log(`| ${l} | ${n0(wall)} | ${l === 'norec' ? '' : `${sg(wall - norec)} (${pc(wall, norec)})`} | ${pc(wall, plain)} | ${n0(m((r) => r.vitest_ms))} | ${n0(m((r) => r.record_ms))} | ${n0(m((r) => r.render))} | ${n0(m((r) => r.phases?.ingest))} | ${n0(m((r) => r.phases?.states))} | ${n0(m((r) => r.phases?.write))} | ${n0(m((r) => r.driver?.workerSetupSum))} | ${n0(m((r) => r.driver?.workerCovSum))} | ${n0(m((r) => r.driver?.workerMapSum))} | ${n0(m((r) => r.driver?.workerKeysSum))} | ${n0(post)} | ${[...new Set(g.map((r) => r.exit))].join(',')} |`)
   }
   console.log()
+  const stepKeys = [...new Set(ks.flatMap((r) => Object.keys(r.driver ?? {}).filter((k) => k.startsWith('workerStep_'))))]
+  const postKeys = [...new Set(ks.flatMap((r) => Object.keys(r.driver ?? {}).filter((k) => k.startsWith('post_'))))]
+  if (stepKeys.length) {
+    console.log(`| variant | ${stepKeys.map((k) => `setup ${k.slice(11)} Σ`).join(' | ')} | ${postKeys.map((k) => `driver ${k.slice(5)}`).join(' | ')} | walk |`)
+    console.log(`|---|${stepKeys.map(() => '---:').join('|')}|${postKeys.map(() => '---:').join('|')}|---:|`)
+    for (const l of labels) {
+      const g = by(l)
+      const m = (f) => med(g.map(f))
+      console.log(`| ${l} | ${stepKeys.map((k) => n0(m((r) => r.driver?.[k]))).join(' | ')} | ${postKeys.map((k) => n0(m((r) => r.driver?.[k]))).join(' | ')} | ${n0(m((r) => r.phases?.walk))} |`)
+    }
+    console.log()
+  }
 }

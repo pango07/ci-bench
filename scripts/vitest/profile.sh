@@ -25,7 +25,8 @@ rm -rf "$out" "$work"; mkdir -p "$out/logs" "$work"
 cd "$proj"
 ms() { local up _; read -r up _ </proc/uptime; echo $(( 10#${up/./} * 10 )); }
 
-# label -> environment for `quod vitest` (plain and norec are special)
+# label -> environment for `quod vitest`, space-separated K=V (plain and
+# norec are special)
 declare -A V=(
   [plain]=- [norec]=- [rec]=
   [rec-norender]=QUOD_VITEST_DISABLE=render
@@ -39,12 +40,14 @@ declare -A V=(
   [rec-bare]=QUOD_VITEST_DISABLE=fs,env,loader,escapes,main,cov,preload,render
   [rec-nosetup]=QUOD_VITEST_DISABLE=setup,main,render
   [rec-tick]=QUOD_VITEST_COV_TICK=100
+  [rec-early]=QUOD_VITEST_COV_EARLY=1
+  [rec-nocache]=QUOD_VITEST_COVCACHE=0
 )
 # PROFILE_EXTRA="label=K=V,K2=V2;label2=..." adds variants
 IFS=';' read -ra extra <<<"${PROFILE_EXTRA:-}"
 for e in "${extra[@]}"; do [ -n "$e" ] && V[${e%%=*}]=${e#*=}; done
-full_variants=(${PROFILE_FULL:-plain norec rec rec-norender rec-nocov rec-notake rec-nofs rec-noenv rec-noloader rec-nomain rec-nopreload rec-bare rec-nosetup rec-tick})
-typ_variants=(${PROFILE_TYP:-plain norec rec rec-norender rec-nocov rec-notake rec-tick})
+full_variants=(${PROFILE_FULL:-plain norec rec rec-norender rec-nocov rec-notake rec-nocache rec-early rec-nofs rec-noenv rec-noloader rec-nomain rec-bare rec-nosetup})
+typ_variants=(${PROFILE_TYP:-plain norec rec rec-norender rec-nocov rec-notake rec-nocache rec-early})
 
 one() { # kind round label dir
   local kind=$1 r=$2 label=$3 dir=$4 spec=${V[$3]}
@@ -55,7 +58,7 @@ one() { # kind round label dir
   elif [ "$label" = norec ]; then
     "$QUOD" vitest --no-record --dir "$dir" --summary "$out/s.json" -- "${args[@]}" >"$out/logs/$kind-$label-$r.log" 2>&1
   else
-    local envs=(); IFS=',' read -ra envs <<<"$spec"
+    local envs=(); read -ra envs <<<"$spec"
     env "${envs[@]}" "$QUOD" vitest --audits auto --dir "$dir" --summary "$out/s.json" -- "${args[@]}" >"$out/logs/$kind-$label-$r.log" 2>&1
   fi
   local rc=$? d=$(( $(ms) - s ))
