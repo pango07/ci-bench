@@ -33,6 +33,22 @@ run() { # label, then vitest arguments
 s=$(ms); node -e '' ; echo "node -e '': $(( $(ms) - s )) ms"
 s=$(ms); node -e 'await import("vitest/node")' --input-type=module 2>/dev/null; echo "import vitest/node: $(( $(ms) - s )) ms"
 echo "one: $one"; echo "four: ${four[*]}"; echo "ten: ${ten[*]}"
+if [ "${BREAKDOWN_SET:-}" = cc ]; then
+  # node's compile cache (V8 code for node-loaded modules, main and workers), workers = CPUs
+  run one "$one"
+  rm -rf /work/state/cc; NODE_COMPILE_CACHE=/work/state/cc rep=1 run one-cc-cold "$one"
+  echo "compile cache: $(du -sh /work/state/cc | cut -f1), $(find /work/state/cc -type f | wc -l) files"
+  NODE_COMPILE_CACHE=/work/state/cc run one-cc-warm "$one"
+  run ten "${ten[@]}"
+  NODE_COMPILE_CACHE=/work/state/cc run ten-cc-warm "${ten[@]}"
+  run ten-w4 --maxWorkers=4 "${ten[@]}"
+  NODE_COMPILE_CACHE=/work/state/cc run ten-cc-w4 --maxWorkers=4 "${ten[@]}"
+  run full
+  run full-w4 --maxWorkers=4
+  NODE_COMPILE_CACHE=/work/state/cc run full-cc-w4 --maxWorkers=4
+  echo "compile cache after: $(du -sh /work/state/cc | cut -f1)"
+  exit 0
+fi
 if [ -n "${QUOD:-}" ]; then
   # The critical path itself: record everything once, then --no-record with
   # nothing changed (all replay) and with one test file touched (one runs).
