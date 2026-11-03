@@ -140,6 +140,7 @@ for i in "${!commits[@]}"; do
       setmode plain; read -r p_ms p_rc < <(runtest plain "$i")
     fi
     cp -a "$Q/reports" "$out/runs/$i/check-reports" 2>/dev/null
+    (( i < 2 )) && { echo "witness run $i wrote:"; find "$L" "$Q/reports" "$D/cur" "$proj" -path "$proj/node_modules" -prune -o -name '*.json' -newer "$out/logs/plain-$i.log" -print 2>/dev/null | grep -v '/dump/\|/results/' | head -20; } | tee -a "$out/logs/witness-files.log"
   else
     if (( i % 2 == 0 )); then
       setmode plain; read -r p_ms p_rc < <(runtest plain "$i")
