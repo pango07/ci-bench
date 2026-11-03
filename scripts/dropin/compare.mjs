@@ -24,12 +24,14 @@ const load = (p) => {
   if (!j) return null
   const m = new Map()
   for (const t of j.testResults ?? []) {
-    const tests = (t.assertionResults ?? []).map((x) => `${x.fullName ?? x.title}=${x.status}`).sort()
+    // vitest's fullName joins ancestors with ' '; quod's --report joins them with ' > '
+    const tests = (t.assertionResults ?? []).map((x) => `${(x.fullName ?? x.title).split(' > ').join(' ')}=${({ todo: 'skipped', pending: 'skipped' })[x.status] ?? x.status}`).sort()
     m.set(t.name, { status: t.status, tests })
   }
   return m
 }
-const same = (x, y) => x.status === y.status && x.tests.join('\n') === y.tests.join('\n')
+// quod's --report has no file-level status: then the tests alone decide.
+const same = (x, y) => (x.status == null || y.status == null || x.status === y.status) && x.tests.join('\n') === y.tests.join('\n')
 const ls = (d, ext) => {
   try {
     return fs.readdirSync(d).filter((f) => f.endsWith(ext)).map((f) => f.slice(0, -ext.length))
@@ -42,7 +44,13 @@ const r = { invocations: keys.length, intercepted: 0, files: 0, ran: 0, replayed
 for (const key of keys) {
   const meta = rd(path.join(dir, 'check', `${key}.meta`)) ?? rd(path.join(dir, 'plain', `${key}.meta`))
   const P = load(path.join(dir, 'plain', `${key}.json`))
-  const C = load(path.join(dir, 'check', `${key}.json`))
+  // The check run's vitest JSON; when its reporter wrote none (an inline
+  // recording run), quod's own --report of the same run (per-test states).
+  let C = load(path.join(dir, 'check', `${key}.json`))
+  if (!C && meta) {
+    C = load(path.join(dir, 'check-reports', `${meta.id}.json`))
+    if (C) r.check_from_quod_report = (r.check_from_quod_report ?? 0) + 1
+  }
   const S = load(path.join(dir, 'shadow', `${key}.json`))
   const out = meta ? rd(path.join(dir, 'check-out', `${meta.id}.json`)) : null
   const k = { key, id: meta?.id, args: meta?.args, files: P?.size ?? 0, ran: null, replayed: null }

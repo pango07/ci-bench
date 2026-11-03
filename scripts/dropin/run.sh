@@ -131,7 +131,7 @@ for i in "${!commits[@]}"; do
   sh_ms=0; sh_rc=0
   if [ "$mode" = witness ]; then
     # One job per commit: the ledger the previous commit's job left.
-    rm -f "$L"/*/out.json
+    rm -f "$L"/*/out.json; rm -rf "$Q/reports"; mkdir -p "$Q/reports"
     if (( i % 2 == 0 )); then
       setmode plain; read -r p_ms p_rc < <(runtest plain "$i")
       setmode witness; read -r q_ms q_rc < <(runtest check "$i"); savout
@@ -139,6 +139,7 @@ for i in "${!commits[@]}"; do
       setmode witness; read -r q_ms q_rc < <(runtest check "$i"); savout
       setmode plain; read -r p_ms p_rc < <(runtest plain "$i")
     fi
+    cp -a "$Q/reports" "$out/runs/$i/check-reports" 2>/dev/null
   else
     if (( i % 2 == 0 )); then
       setmode plain; read -r p_ms p_rc < <(runtest plain "$i")
@@ -166,7 +167,7 @@ for i in "${!commits[@]}"; do
       install_ms: +install_ms + +build_ms, install_only_ms: +install_ms, build_ms: +build_ms, install_rc: +irc, build_rc: +brc,
       recorded: +recorded, invocations: k.invocations ?? 0, intercepted: k.intercepted ?? 0, files: k.files ?? 0, ran: k.ran ?? 0, replayed: k.replayed ?? 0,
       wrong: k.error ? null : k.wrong.map((w) => w.file), wrong_detail: k.wrong, flaky: k.flaky?.map((w) => w.file) ?? null, flaky_detail: k.flaky,
-      missing: k.missing ?? [], declined: k.declined ?? [], shadow_diff: k.shadow_diff ?? [], per_key: k.per_key, compare_error: k.error,
+      check_from_quod_report: k.check_from_quod_report ?? 0, missing: k.missing ?? [], declined: k.declined ?? [], shadow_diff: k.shadow_diff ?? [], per_key: k.per_key, compare_error: k.error,
       quod_check_log: ql, quod_shadow_log: sl }
     console.log(JSON.stringify(row))
   ' "$i" "$c" "$(git log -1 --format=%s "$c")" "$p_ms" "$p_rc" "$q_ms" "$q_rc" "$sh_ms" "$sh_rc" "$install_ms" "$build_ms" "$irc" "$brc" "$recorded" "$cmp" "$quodlines" "$shlines" | tee -a "$out/results.jsonl"
