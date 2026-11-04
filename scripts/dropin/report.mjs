@@ -51,7 +51,7 @@ const works = why.length === 0
 const said = new Map()
 for (const r of timed) for (const l of String(r.quod_check_log || '').split('|')) {
   const m = l.match(/^(\d+) (.*)$/)
-  if (m && /not supported|plain vitest|declin|cannot|every (test )?file runs|runs every file|shared input changed|no record/i.test(m[2])) said.set(m[2], (said.get(m[2]) ?? 0) + +m[1])
+  if (m && /not supported|plain vitest|declin|cannot|every (test )?file runs|runs every file|shared input changed|no record|keyed for every file|DISAGREES|quarantin|always runs/i.test(m[2])) said.set(m[2], (said.get(m[2]) ?? 0) + +m[1])
 }
 const declinedArgs = [...new Set(rows.flatMap((r) => (r.per_key ?? []).filter((k) => (r.declined ?? []).includes(k.key)).map((k) => JSON.stringify(k.args ?? []))))]
 const declineReason = !invocations
