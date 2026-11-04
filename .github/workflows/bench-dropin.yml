@@ -32,6 +32,10 @@ on:
         description: The second-witness quod (a bin-<sha> release of this repo) for mode witness
         required: false
         default: bin-42050dc
+      hook_ref:
+        description: Bench the hook.cjs of this pango07/quod-action ref instead of the pinned action's (empty = the action's)
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -99,7 +103,7 @@ jobs:
         run: corepack enable
 
       # ---- the one line a customer adds (cloud off: the bench hands the ledger over locally) ----
-      - uses: pango07/quod-action@0d639e9a85fde5f27f06d44811332a6f0fb6fe1e # v1
+      - uses: pango07/quod-action@991753ca6f46d81b184604673dfd247e66a9476e # v2
         with:
           cloud: 'false'
 
@@ -116,6 +120,7 @@ jobs:
       - name: drop-in bench (${{ inputs.mode }})
         env:
           DROPIN_MODE: ${{ inputs.mode }}
+          DROPIN_HOOK_REF: ${{ inputs.hook_ref }}
         run: bash "$RUNNER_TEMP/cibench/scripts/dropin/run.sh"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -129,6 +134,7 @@ jobs:
             ${{ runner.temp }}/dropin/results.jsonl
             ${{ runner.temp }}/dropin/pr.txt
             ${{ runner.temp }}/dropin/logs
+            ${{ runner.temp }}/dropin/cov
           if-no-files-found: ignore
 
   scoreboard:

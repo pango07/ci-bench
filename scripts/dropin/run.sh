@@ -55,6 +55,13 @@ echo "quod: ${quodbin:-none} $([ -n "$quodbin" ] && "$quodbin" --version 2>&1 | 
 # ledger carried from each commit's job to the next. DROPIN_MODE=shadow: the
 # released check + shadow pair.
 mode=${DROPIN_MODE:-witness}
+# DROPIN_HOOK_REF: the action's hook.cjs from that ref of pango07/quod-action
+# instead of the pinned action's (a hook change benched before its release).
+if [ -n "${DROPIN_HOOK_REF:-}" ] && [ $active = 1 ]; then
+  curl -fsSL "https://raw.githubusercontent.com/pango07/quod-action/$DROPIN_HOOK_REF/hook.cjs" -o "$Q/hook.cjs.new" && mv "$Q/hook.cjs.new" "$Q/hook.cjs" \
+    || { echo "::error::could not fetch hook.cjs at $DROPIN_HOOK_REF"; exit 2; }
+  echo "hook.cjs from pango07/quod-action@$DROPIN_HOOK_REF"
+fi
 if [ "$mode" = witness ] && [ $active = 1 ]; then
   [ -x "${DROPIN_QUOD_W:-}" ] || { echo "::error::witness mode needs DROPIN_QUOD_W"; exit 2; }
   sed "s/'--no-record', //" "$Q/hook.cjs" > "$Q/hook-witness.cjs"
@@ -85,9 +92,12 @@ clean_caches() { # what a fresh runner would not have: task-runner caches
   rm -rf "$proj/node_modules/.cache/turbo" "$proj/.nx/cache" "$proj/.nx/workspace-data" 2>/dev/null
   return 0
 }
+# The coverage outputs a job uploads or checks, wherever vitest wrote them.
+covfiles() { find "$proj" \( -name node_modules -o -name .git \) -prune -o -type f \( -name coverage-final.json -o -name lcov.info -o -name coverage-summary.json -o -name clover.xml \) -print 2>/dev/null; }
 runtest() { # tag, commit index -> "ms rc"
   local tag=$1 i=$2 s rc
   clean_caches
+  covfiles | while read -r f; do rm -f "$f"; done
   s=$(ms)
   # Each run is its own CI job: the per-job and per-run variables GitHub sets
   # differ (the commit, the run, the job, the runner).
@@ -97,6 +107,8 @@ runtest() { # tag, commit index -> "ms rc"
   rc=$?
   local d=$(( $(ms) - s ))
   mkdir -p "$out/runs/$i/$tag"; cp -a "$D/cur/." "$out/runs/$i/$tag/" 2>/dev/null
+  mkdir -p "$out/runs/$i/$tag-cov"
+  covfiles | while read -r f; do r=${f#"$proj"/}; cp "$f" "$out/runs/$i/$tag-cov/${r//\//__}"; done
   echo "$d $rc"
 }
 
@@ -158,11 +170,22 @@ for i in "${!commits[@]}"; do
   fi
   recorded=$(QUOD_SHIM_ACTIVE=1 "$REAL" -e 'let n=0;for(const f of process.argv.slice(1)){try{n+=Object.keys(JSON.parse(require("fs").readFileSync(f,"utf8")).files||{}).length}catch{}}console.log(n)' "$L"/*/ledger.json)
   cmp=$(QUOD_SHIM_ACTIVE=1 "$REAL" "$here/compare.mjs" "$out/runs/$i" 2>"$out/logs/compare-$i.err")
+  covc=$(QUOD_SHIM_ACTIVE=1 "$REAL" "$here/covcmp.mjs" "$out/runs/$i/plain-cov" "$out/runs/$i/check-cov" "$out/logs/plain-$i.log" "$out/logs/check-$i.log" 2>>"$out/logs/compare-$i.err")
+  echo "coverage, commit $i: $covc"
+  # A difference: is plain's own coverage stable? plain again, against itself.
+  if QUOD_SHIM_ACTIVE=1 "$REAL" -e 'process.exit(JSON.parse(process.argv[1]).diffs?.length?0:1)' "$covc" 2>/dev/null; then
+    setmode plain; runtest plain2 "$i" >/dev/null
+    covp=$(QUOD_SHIM_ACTIVE=1 "$REAL" "$here/covcmp.mjs" "$out/runs/$i/plain-cov" "$out/runs/$i/plain2-cov" "$out/logs/plain-$i.log" "$out/logs/plain2-$i.log" 2>>"$out/logs/compare-$i.err")
+    echo "coverage, commit $i, plain against plain: $covp"
+    covc=$(QUOD_SHIM_ACTIVE=1 "$REAL" -e 'const c=JSON.parse(process.argv[1]),p=JSON.parse(process.argv[2]);const pf=new Set(p.diffs.map(d=>d.file));c.plain_vs_plain=p.diffs;c.nondet=c.diffs.filter(d=>pf.has(d.file));c.diffs=c.diffs.filter(d=>!pf.has(d.file));console.log(JSON.stringify(c))' "$covc" "$covp")
+  fi
+  mkdir -p "$out/cov/$i"; cp -a "$out/runs/$i/"*-cov "$out/cov/$i/" 2>/dev/null
   pc=$(QUOD_SHIM_ACTIVE=1 "$REAL" "$here/counts.mjs" "$out/logs/plain-$i.log"); qc=$(QUOD_SHIM_ACTIVE=1 "$REAL" "$here/counts.mjs" "$out/logs/check-$i.log")
   quodlines=$(grep -h -oE 'quod( vitest)?:.*' "$out/logs/check-$i.log" | grep -vE '(GITHUB|RUNNER|ACTIONS)_[A-Z_]* keyed for every' | sort | uniq -c | sort -rn | head -6 | sed 's/^ *//' | tr '\n' '|')
   shlines=$(grep -h -oE 'quod( vitest)?:.*' "$out/logs/shadow-$i.log" 2>/dev/null | grep -vE '(GITHUB|RUNNER|ACTIONS)_[A-Z_]* keyed for every' | sort | uniq -c | sort -rn | head -6 | sed 's/^ *//' | tr '\n' '|')
   DROPIN_MODE_EFF=$mode QUOD_SHIM_ACTIVE=1 "$REAL" -e '
-    const [i, c, subject, p_ms, p_rc, q_ms, q_rc, sh_ms, sh_rc, install_ms, build_ms, irc, brc, recorded, cmp, ql, sl, pc, qc] = process.argv.slice(1)
+    const [i, c, subject, p_ms, p_rc, q_ms, q_rc, sh_ms, sh_rc, install_ms, build_ms, irc, brc, recorded, cmp, ql, sl, pc, qc, covc] = process.argv.slice(1)
+    let cov; try { cov = JSON.parse(covc) } catch { cov = { error: covc || "covcmp failed", diffs: [{ file: "(covcmp)", why: "failed" }] } }
     let k; try { k = JSON.parse(cmp) } catch { k = { error: cmp || "compare failed" } }
     // Where the Quod run left no per-test report, its per-state counts against plain.
     const P = JSON.parse(pc), Q = JSON.parse(qc)
@@ -178,9 +201,9 @@ for i in "${!commits[@]}"; do
       recorded: +recorded, invocations: k.invocations ?? 0, intercepted: k.intercepted ?? 0, files: k.files ?? 0, ran: k.ran ?? 0, replayed: k.replayed ?? 0,
       wrong: k.error ? null : k.wrong.map((w) => w.file), wrong_detail: k.wrong, flaky: k.flaky?.map((w) => w.file) ?? null, flaky_detail: k.flaky,
       check_from_quod_report: k.check_from_quod_report ?? 0, compared_by_counts: noReport.length, counts_plain: P, counts_check: Q, counts_match: countsMatch, missing: k.missing ?? [], declined: k.declined ?? [], shadow_diff: k.shadow_diff ?? [], per_key: k.per_key, compare_error: k.error,
-      quod_check_log: ql, quod_shadow_log: sl }
+      quod_check_log: ql, quod_shadow_log: sl, cov }
     console.log(JSON.stringify(row))
-  ' "$i" "$c" "$(git log -1 --format=%s "$c")" "$p_ms" "$p_rc" "$q_ms" "$q_rc" "$sh_ms" "$sh_rc" "$install_ms" "$build_ms" "$irc" "$brc" "$recorded" "$cmp" "$quodlines" "$shlines" "$pc" "$qc" | tee -a "$out/results.jsonl"
+  ' "$i" "$c" "$(git log -1 --format=%s "$c")" "$p_ms" "$p_rc" "$q_ms" "$q_rc" "$sh_ms" "$sh_rc" "$install_ms" "$build_ms" "$irc" "$brc" "$recorded" "$cmp" "$quodlines" "$shlines" "$pc" "$qc" "$covc" | tee -a "$out/results.jsonl"
   echo "::endgroup::"
 done
 # The pull-request case: a PR's first commit restores the default branch's
@@ -205,9 +228,22 @@ rm -rf "$Q/reports"
 QUOD_SHIM_ACTIVE=1 "$REAL" "$here/../vitest/ci-metrics.mjs" "$out/results.jsonl" "$out" > "$out/ci.md" || true
 QUOD_SHIM_ACTIVE=1 "$REAL" "$here/report.mjs" "$out/results.jsonl" "$out" > "$out/report.md"
 cat "$out/ci.md" "$out/report.md"
+QUOD_SHIM_ACTIVE=1 "$REAL" -e '
+  const l = require("fs").readFileSync(process.argv[1], "utf8").trim().split("\n").map(JSON.parse)
+  const files = l.reduce((n, r) => n + (r.cov?.files ?? 0), 0), same = l.reduce((n, r) => n + (r.cov?.same ?? 0), 0)
+  // A difference is wrong unless a second plain run differs from the first
+  // in the same output (then the coverage itself is not deterministic).
+  // Where Quod never engaged (the check run was plain vitest), any
+  // difference is plain against plain.
+  const bad = l.filter((r) => r.cov?.diffs?.length && r.intercepted > 0)
+  const nondet = l.filter((r) => r.cov?.nondet?.length || (r.cov?.diffs?.length && !(r.intercepted > 0)))
+  console.log(`\n### Coverage outputs, plain against Quod\n\n${files ? `${same} of ${files} coverage outputs identical over ${l.length} commits (coverage-final.json, lcov.info, coverage-summary.json, clover.xml without timestamps, the text table)` : "no coverage outputs on any commit"}; ${bad.length ? `WRONG (differences plain itself does not show) on commits ${bad.map((r) => r.i).join(",")}: ${JSON.stringify(bad[0].cov.diffs.slice(0, 4))}` : "0 wrong differences"}${nondet.length ? `; plain vitest differs from itself (a second plain run) in the same outputs on commits ${nondet.map((r) => r.i).join(",")}: ${JSON.stringify((nondet[0].cov.plain_vs_plain ?? nondet[0].cov.diffs).slice(0, 3))}` : ""}`)
+  const t = l.find((r) => r.cov?.totals)?.cov.totals; if (t) console.log(`\nplain totals (first commit with a summary): ${JSON.stringify(t)}`)
+' "$out/results.jsonl" >> "$out/report.md"
+cat "$out/report.md" | tail -4
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$out/report.md" "$out/ci.md" >> "$GITHUB_STEP_SUMMARY"
 # Loud: a wrong replay fails the job.
-if QUOD_SHIM_ACTIVE=1 "$REAL" -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n").map(JSON.parse);process.exit(l.some(r=>r.wrong===null||r.wrong.length)?1:0)' "$out/results.jsonl"; then
+if QUOD_SHIM_ACTIVE=1 "$REAL" -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n").map(JSON.parse);process.exit(l.some(r=>r.wrong===null||r.wrong.length||r.cov?.diffs?.length&&r.intercepted>0)?1:0)' "$out/results.jsonl"; then
   echo "0 wrong replays"
 else
   echo "::error::WRONG REPLAYS (or an uncompared commit): see report.md"; exit 1
