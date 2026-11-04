@@ -103,7 +103,7 @@ jobs:
         run: corepack enable
 
       # ---- the one line a customer adds (cloud off: the bench hands the ledger over locally) ----
-      - uses: pango07/quod-action@0d639e9a85fde5f27f06d44811332a6f0fb6fe1e # v1
+      - uses: pango07/quod-action@991753ca6f46d81b184604673dfd247e66a9476e # v2
         with:
           cloud: 'false'
 
