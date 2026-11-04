@@ -233,15 +233,17 @@ QUOD_SHIM_ACTIVE=1 "$REAL" -e '
   const files = l.reduce((n, r) => n + (r.cov?.files ?? 0), 0), same = l.reduce((n, r) => n + (r.cov?.same ?? 0), 0)
   // A difference is wrong unless a second plain run differs from the first
   // in the same output (then the coverage itself is not deterministic).
-  const bad = l.filter((r) => r.cov?.diffs?.length)
-  const nondet = l.filter((r) => r.cov?.nondet?.length)
-  console.log(`\n### Coverage outputs, plain against Quod\n\n${files ? `${same} of ${files} coverage outputs identical over ${l.length} commits (coverage-final.json, lcov.info, coverage-summary.json, clover.xml without timestamps, the text table)` : "no coverage outputs on any commit"}; ${bad.length ? `WRONG (differences plain itself does not show) on commits ${bad.map((r) => r.i).join(",")}: ${JSON.stringify(bad[0].cov.diffs.slice(0, 4))}` : "0 wrong differences"}${nondet.length ? `; plain vitest differs from itself (a second plain run) in the same outputs on commits ${nondet.map((r) => r.i).join(",")}: ${JSON.stringify(nondet[0].cov.plain_vs_plain.slice(0, 3))}` : ""}`)
+  // Where Quod never engaged (the check run was plain vitest), any
+  // difference is plain against plain.
+  const bad = l.filter((r) => r.cov?.diffs?.length && r.intercepted > 0)
+  const nondet = l.filter((r) => r.cov?.nondet?.length || (r.cov?.diffs?.length && !(r.intercepted > 0)))
+  console.log(`\n### Coverage outputs, plain against Quod\n\n${files ? `${same} of ${files} coverage outputs identical over ${l.length} commits (coverage-final.json, lcov.info, coverage-summary.json, clover.xml without timestamps, the text table)` : "no coverage outputs on any commit"}; ${bad.length ? `WRONG (differences plain itself does not show) on commits ${bad.map((r) => r.i).join(",")}: ${JSON.stringify(bad[0].cov.diffs.slice(0, 4))}` : "0 wrong differences"}${nondet.length ? `; plain vitest differs from itself (a second plain run) in the same outputs on commits ${nondet.map((r) => r.i).join(",")}: ${JSON.stringify((nondet[0].cov.plain_vs_plain ?? nondet[0].cov.diffs).slice(0, 3))}` : ""}`)
   const t = l.find((r) => r.cov?.totals)?.cov.totals; if (t) console.log(`\nplain totals (first commit with a summary): ${JSON.stringify(t)}`)
 ' "$out/results.jsonl" >> "$out/report.md"
 cat "$out/report.md" | tail -4
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$out/report.md" "$out/ci.md" >> "$GITHUB_STEP_SUMMARY"
 # Loud: a wrong replay fails the job.
-if QUOD_SHIM_ACTIVE=1 "$REAL" -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n").map(JSON.parse);process.exit(l.some(r=>r.wrong===null||r.wrong.length||r.cov?.diffs?.length)?1:0)' "$out/results.jsonl"; then
+if QUOD_SHIM_ACTIVE=1 "$REAL" -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n").map(JSON.parse);process.exit(l.some(r=>r.wrong===null||r.wrong.length||r.cov?.diffs?.length&&r.intercepted>0)?1:0)' "$out/results.jsonl"; then
   echo "0 wrong replays"
 else
   echo "::error::WRONG REPLAYS (or an uncompared commit): see report.md"; exit 1
