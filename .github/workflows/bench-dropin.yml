@@ -2,13 +2,18 @@
 # customer adds it (the action line + `permissions: id-token: write`), one
 # matrix job per repository (scripts/dropin/corpus.json). Each job sets up
 # the project as its CI does (pnpm / bun / corepack / setup-node, their
-# install, their build), runs pango07/quod-action (mode check), then replays
-# N consecutive commits: plain, check and shadow per commit, compared per
-# file and per test (scripts/dropin/run.sh). The scoreboard job collects
-# every row (scoreboard.json and the job summary).
+# install, their build), runs pango07/quod-action (v2: the test job records
+# inline, a record replays once a second run agrees, QUOD_VITEST_WITNESSES=2;
+# no shadow job), then runs N consecutive commits: plain and Quod per
+# commit, compared per file and per test (scripts/dropin/run.sh). The
+# scoreboard job collects every row (scoreboard.json and the job summary).
 #
-#   gh workflow run bench-dropin.yml -R pango07/ci-bench
-#   gh workflow run bench-dropin.yml -R pango07/ci-bench -f only=axios,yup -f commits=3
+# The quod under test is `quod_bin`: the action installs it (its sha256
+# checked by the action) and the job fails unless the binary the action's
+# config points at is byte-for-byte that release's binary.
+#
+#   gh workflow run bench-dropin.yml -R pango07/ci-bench -f quod_bin=bin-32b630c
+#   gh workflow run bench-dropin.yml -R pango07/ci-bench -f quod_bin=bin-32b630c -f only=axios,yup -f commits=3
 name: bench-dropin
 
 on:
@@ -23,15 +28,14 @@ on:
         required: false
         default: '12'
       mode:
-        description: "witness (no shadow job: inline recording, QUOD_VITEST_WITNESSES=2) or shadow (the released check + shadow pair)"
+        description: "witness (the product: inline recording, QUOD_VITEST_WITNESSES=2, no shadow job) or shadow (the retired check + shadow pair)"
         required: false
         default: witness
         type: choice
         options: [witness, shadow]
-      witness_bin:
-        description: The second-witness quod (a bin-<sha> release of this repo) for mode witness
-        required: false
-        default: bin-42050dc
+      quod_bin:
+        description: The quod under test (a bin-<sha> release of this repo); the action installs it and the job asserts it is what runs
+        required: true
       hook_ref:
         description: Bench the hook.cjs of this pango07/quod-action ref instead of the pinned action's (empty = the action's)
         required: false
@@ -102,21 +106,48 @@ jobs:
         if: matrix.corepack
         run: corepack enable
 
-      # ---- the one line a customer adds (cloud off: the bench hands the ledger over locally) ----
-      - uses: pango07/quod-action@991753ca6f46d81b184604673dfd247e66a9476e # v2
-        with:
-          cloud: 'false'
-
-      - name: second-witness quod (mode witness)
-        if: inputs.mode == 'witness'
+      # The release under test, fetched independently of the action: its
+      # tarball's sha256 (the action's `sha256` input, checked by the action)
+      # and its binary (compared with what the action installed, below).
+      - name: the quod under test (${{ inputs.quod_bin }})
+        id: qbin
         env:
           GH_TOKEN: ${{ github.token }}
-          W: ${{ inputs.witness_bin }}
+          B: ${{ inputs.quod_bin }}
         run: |
-          mkdir -p "$RUNNER_TEMP/qw"
-          gh release download "$W" -R "$GITHUB_REPOSITORY" -p 'quod-linux-x86_64.tar.gz' -D "$RUNNER_TEMP/qw"
-          tar -C "$RUNNER_TEMP/qw" -xzf "$RUNNER_TEMP/qw/quod-linux-x86_64.tar.gz"
-          echo "DROPIN_QUOD_W=$RUNNER_TEMP/qw/quod" >> "$GITHUB_ENV"
+          [[ "$B" =~ ^bin-[0-9a-f]{7,40}$ ]] || { echo "::error::quod_bin must be a bin-<sha> release, got '$B'"; exit 2; }
+          mkdir -p "$RUNNER_TEMP/qref"
+          gh release download "$B" -R "$GITHUB_REPOSITORY" -p 'quod-linux-x86_64.tar.gz' -D "$RUNNER_TEMP/qref"
+          sum=$(sha256sum "$RUNNER_TEMP/qref/quod-linux-x86_64.tar.gz" | cut -d' ' -f1)
+          tar -C "$RUNNER_TEMP/qref" -xzf "$RUNNER_TEMP/qref/quod-linux-x86_64.tar.gz"
+          bsum=$(sha256sum "$RUNNER_TEMP/qref/quod" | cut -d' ' -f1)
+          echo "$B: tarball sha256 $sum, binary sha256 $bsum"
+          echo "sha256=$sum" >> "$GITHUB_OUTPUT"
+          { echo "DROPIN_QUOD_BIN=$B"; echo "DROPIN_QUOD_BIN_SHA256=$bsum"; } >> "$GITHUB_ENV"
+
+      # ---- the one line a customer adds (cloud off: the bench hands the ledger over locally) ----
+      # v2 + the coverage hook (fix/coverage-v2) + yarn reach (fix/yarn-vitest3):
+      # the action that ships with bin-32b630c. Dependencies and the task
+      # cache off: the bench measures the test step, and a remote turbo cache
+      # would answer plain and Quod alike.
+      - uses: pango07/quod-action@76297ed9712e1e76381211b6d6f92c7b699e3aab # exp/supported-v1
+        with:
+          cloud: 'false'
+          dependencies: 'false'
+          task-cache: 'false'
+          version: ${{ inputs.quod_bin }}
+          sha256: ${{ steps.qbin.outputs.sha256 }}
+
+      # Fails the job unless the quod the action's shim runs is the release
+      # under test (the 2026-11-04 run benched the action's default
+      # bin-d40c669 while naming bin-32b630c).
+      - name: assert the installed quod is ${{ inputs.quod_bin }}
+        run: |
+          q=$(QUOD_SHIM_ACTIVE=1 node -p 'require(process.argv[1]).quod' "$RUNNER_TEMP/quod/config.json") || { echo "::error::the action wrote no config.json"; exit 2; }
+          got=$(sha256sum "$q" | cut -d' ' -f1)
+          echo "the action's quod: $q (sha256 $got); wanted $DROPIN_QUOD_BIN (sha256 $DROPIN_QUOD_BIN_SHA256)"
+          [ "$got" = "$DROPIN_QUOD_BIN_SHA256" ] || { echo "::error::installed quod $q is not $DROPIN_QUOD_BIN (sha256 $got != $DROPIN_QUOD_BIN_SHA256)"; exit 2; }
+          case "$q" in */quod/"$DROPIN_QUOD_BIN"/quod) ;; *) echo "::error::installed quod path $q is not the $DROPIN_QUOD_BIN install"; exit 2 ;; esac
       - name: drop-in bench (${{ inputs.mode }})
         env:
           DROPIN_MODE: ${{ inputs.mode }}

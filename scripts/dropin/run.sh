@@ -5,24 +5,23 @@
 #
 #   run.sh   (env: DROPIN_{SHA,COMMITS,INSTALL,BUILD,TEST,WORKDIR,EXTRA_ENV,META}; cwd = the project)
 #
-# Per commit, as CI would see it (fresh checkout + install from a warm store,
-# the repo's build steps, then the test step):
+# Per commit, as CI would see it (fresh checkout + install, the repo's build
+# steps, then the test step), DROPIN_MODE=witness (the product, default):
 #   plain   the test command with Quod's hook not loaded
-#   check   the test command with the action's shim + hook (mode check),
-#           reading the newest completed recording (the previous commit's shadow)
-#   shadow  the test command with the hook in mode shadow (what
-#           quod-action/.github/workflows/shadow.yml does), recording from
-#           the previous recording, with the check run's reports as its
-#           --expect-report; its ledger is the next commit's recording.
+#   check   the test command with the action's shim + hook: it replays what
+#           the ledger proves unchanged (seen by two agreeing runs) and runs
+#           and records the rest inline; its ledger is the next commit's.
 # plain and check alternate order. Every vitest command line the test step
 # starts gets a JSON reporter appended (bench.cjs, before the hook), so the
-# three runs are compared per file and per test (compare.mjs).
+# runs are compared per file and per test (compare.mjs), and their coverage
+# outputs (covcmp.mjs). DROPIN_MODE=shadow keeps the retired check + shadow
+# pair (a separate recording run per commit).
 #
 # The only change to the action's runtime: the node shim it put on PATH is
 # rewritten to also preload bench.cjs (and, for plain, to not preload the
-# hook: QUOD_DISABLE does not survive turbo's strict env), and config.json's
-# mode is switched between check and shadow. The ledger hand-off is local
-# (cloud: false), one directory per completed recording.
+# hook: QUOD_DISABLE does not survive turbo's strict env). The ledger
+# hand-off is local (cloud: false). The quod that runs is asserted to be
+# DROPIN_QUOD_BIN (assert_quod).
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 proj=$(pwd)
@@ -48,12 +47,26 @@ printf '{"root":"%s","cur":"%s"}' "$proj" "$D/cur" > "$D/control.json"
 quodbin=$([ $active = 1 ] && node -p 'require(process.argv[1]).quod' "$Q/config.json")
 echo "quod: ${quodbin:-none} $([ -n "$quodbin" ] && "$quodbin" --version 2>&1 | head -1)"
 
-# DROPIN_MODE=witness (default): no shadow job. The test job records inline
-# with second-witness trust (QUOD_VITEST_WITNESSES=2, DROPIN_QUOD_W: a
-# second-witness quod): the action's hook, with its check-mode
-# `--no-record` dropped (what an inline-recording action would run), and the
-# ledger carried from each commit's job to the next. DROPIN_MODE=shadow: the
-# released check + shadow pair.
+# The quod under test (DROPIN_QUOD_BIN, its binary's sha256
+# DROPIN_QUOD_BIN_SHA256): the binary the action's config points at must be
+# it, before and after the commits (nothing in the bench may swap it).
+assert_quod() {
+  [ $active = 1 ] || return 0
+  local q got
+  q=$(QUOD_SHIM_ACTIVE=1 "$REAL" -p 'require(process.argv[1]).quod' "$Q/config.json")
+  got=$(sha256sum "$q" | cut -d' ' -f1)
+  if [ -z "${DROPIN_QUOD_BIN_SHA256:-}" ] || [ "$got" != "$DROPIN_QUOD_BIN_SHA256" ]; then
+    echo "::error::the quod that runs ($q, sha256 $got) is not ${DROPIN_QUOD_BIN:-the requested release} (sha256 ${DROPIN_QUOD_BIN_SHA256:-unset})"; exit 2
+  fi
+  echo "quod under test: ${DROPIN_QUOD_BIN} at $q (sha256 $got) $1"
+}
+assert_quod "(before the commits)"
+
+# DROPIN_MODE=witness (default): the product. No shadow job: the test job
+# records inline (the action's `record`, default true) and a record replays
+# once a second run agrees (QUOD_VITEST_WITNESSES=2); the ledger is carried
+# from each commit's job to the next. DROPIN_MODE=shadow: the retired check +
+# shadow pair.
 mode=${DROPIN_MODE:-witness}
 # DROPIN_HOOK_REF: the action's hook.cjs from that ref of pango07/quod-action
 # instead of the pinned action's (a hook change benched before its release).
@@ -63,18 +76,16 @@ if [ -n "${DROPIN_HOOK_REF:-}" ] && [ $active = 1 ]; then
   echo "hook.cjs from pango07/quod-action@$DROPIN_HOOK_REF"
 fi
 if [ "$mode" = witness ] && [ $active = 1 ]; then
-  [ -x "${DROPIN_QUOD_W:-}" ] || { echo "::error::witness mode needs DROPIN_QUOD_W"; exit 2; }
-  sed "s/'--no-record', //" "$Q/hook.cjs" > "$Q/hook-witness.cjs"
-  grep -q -- "--no-record" "$Q/hook-witness.cjs" && { echo "::error::could not drop --no-record from hook.cjs"; exit 2; }
-  QUOD_SHIM_ACTIVE=1 "$REAL" -e 'const f=process.argv[1],c=JSON.parse(require("fs").readFileSync(f,"utf8"));c.quod=process.argv[2];require("fs").writeFileSync(f,JSON.stringify(c),{mode:0o600})' "$Q/config.json" "$DROPIN_QUOD_W"
+  QUOD_SHIM_ACTIVE=1 "$REAL" -e 'process.exit(require(process.argv[1]).record===true?0:1)' "$Q/config.json" \
+    || { echo "::error::witness mode: the action does not record inline (config.record is not true)"; exit 2; }
   export QUOD_VITEST_WITNESSES=2
   rm -rf "$L"; mkdir -p "$L"   # no recording yet (the action may have restored one from this repo's cache)
-  echo "witness mode: $DROPIN_QUOD_W ($("$DROPIN_QUOD_W" --version 2>&1 | head -1)), QUOD_VITEST_WITNESSES=2"
+  echo "witness mode: inline recording with the action's quod, QUOD_VITEST_WITNESSES=2"
 fi
 setmode() { # plain | check | shadow | witness
   local req="--require '$D/bench.cjs'"
   [ "$1" = check ] || [ "$1" = shadow ] && [ $active = 1 ] && req="$req --require '$Q/hook.cjs'"
-  [ "$1" = witness ] && [ $active = 1 ] && req="$req --require '$Q/hook-witness.cjs'"
+  [ "$1" = witness ] && [ $active = 1 ] && req="$req --require '$Q/hook.cjs'"
   printf '#!/bin/sh\n[ "$QUOD_SHIM_ACTIVE" = 1 ] && exec %s "$@"\nexec %s %s "$@"\n' "'$REAL'" "'$REAL'" "$req" > "$Q/bin/node"
   chmod +x "$Q/bin/node"
   if [ $active = 1 ] && [ "$1" != plain ]; then
@@ -222,6 +233,7 @@ if [ $active = 1 ]; then
   [ "$mode" = witness ] && { rm -rf "$L"; mv "$L.keep" "$L"; }
   echo "pull_request check of the last commit against the ledger the push jobs left: $pr" | tee "$out/pr.txt"
 fi
+assert_quod "(after the commits)"
 # Nothing for the action's post step to upload (its artifact name is the
 # same in every matrix job).
 rm -rf "$Q/reports"
