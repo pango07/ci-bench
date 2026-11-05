@@ -90,8 +90,8 @@ jobs:
         if: startsWith(inputs.variant, 'quod') && inputs.variant != 'quod-shipped'
         uses: pango07/quod-action@744c27f5a98693b0771a6d060f4b85d17df07224 # exp/whole-job
         with:
-          version: bin-cb5d92d
-          sha256: 9e689938e2ae53f513ed45d0ae4060a043d73d44af53a64d51109b5c01d0edeb
+          version: bin-54c610f
+          sha256: ad153c024dd8c785269d3eedfe0b00d84eac2ec94aa48a31b1feee2ac7dad2e2
           cloud: 'false'
           task-cache: 'false'
           timing-sensitive: ${{ startsWith(inputs.variant, 'quod-ts') && 'replay' || 'off' }}
