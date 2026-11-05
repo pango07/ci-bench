@@ -37,19 +37,19 @@ jobs:
       - name: record (1)
         continue-on-error: true
         run: |
-          export QUOD_STATE=/tmp/qs
+          export QUOD_HOME=/tmp/qs
           time /tmp/q/quod run --host-root --toolchain node -- npm run test:release 2>&1 | tail -40
       - name: again (2)
         continue-on-error: true
         run: |
-          export QUOD_STATE=/tmp/qs
+          export QUOD_HOME=/tmp/qs
           time /tmp/q/quod run --host-root --toolchain node -- npm run test:release 2>&1 | tail -40
       - name: again (3)
         continue-on-error: true
         run: |
-          export QUOD_STATE=/tmp/qs
+          export QUOD_HOME=/tmp/qs
           time /tmp/q/quod run --host-root --toolchain node -- npm run test:release 2>&1 | tail -40
       - name: sudo record (4)
         continue-on-error: true
         run: |
-          time sudo -E env "PATH=$PATH" QUOD_STATE=/tmp/qs2 /tmp/q/quod run --host-root --toolchain node -- npm run test:release 2>&1 | tail -40
+          time sudo -E env "PATH=$PATH" QUOD_HOME=/tmp/qs2 /tmp/q/quod run --host-root --toolchain node -- npm run test:release 2>&1 | tail -40
