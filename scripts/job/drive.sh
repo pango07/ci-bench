@@ -86,7 +86,10 @@ cat "$out"/runs/*.jsonl 2>/dev/null | while read -r row; do
   jobs=$(gh api "repos/$R/actions/runs/$rid/jobs")
   run=$(gh api "repos/$R/actions/runs/$rid" --jq '{run_started_at, created_at, conclusion}')
   jid=$(jq -r '.jobs[0].id' <<<"$jobs")
-  quod=$(gh api "repos/$R/actions/jobs/$jid/logs" 2>/dev/null | sed 's/^[0-9TZ:.-]* //' | grep -E '^(quod( vitest)?|Quod)[ :]' | grep -vE '(GITHUB|RUNNER|ACTIONS)_[A-Z_]* keyed for every' | head -40 | jq -Rs .)
+  curl -sSL -o "$out/log.txt" -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+    "https://api.github.com/repos/$R/actions/jobs/$jid/logs" > "$out/log.status" 2>&1 || true
+  [ "$(cat "$out/log.status")" = 200 ] || echo "::warning::run $rid: job log HTTP $(cat "$out/log.status")"
+  quod=$(sed 's/^[0-9TZ:.-]* //' "$out/log.txt" | grep -E '^(quod( vitest)?|Quod)[ :]' | grep -vE '(GITHUB|RUNNER|ACTIONS)_[A-Z_]* keyed for every' | head -40 | jq -Rs .)
   jq -c --argjson jobs "$jobs" --argjson run "$run" --argjson quod "${quod:-\"\"}" '. + {run_meta: $run, job: ($jobs.jobs[0] | {id, created_at, started_at, completed_at, conclusion, steps: [.steps[] | {name, conclusion, started_at, completed_at}]}), quod: $quod}' <<<"$row" >> "$out/jobs.jsonl"
 done
 [ -f "$out/branches" ] && while read -r br; do gh api -X DELETE "repos/$R/git/refs/heads/$br" >/dev/null || true; done < "$out/branches"
