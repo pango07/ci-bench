@@ -45,7 +45,7 @@ const per = rows.map((r) => {
   const work = g.install + g.build + g.test
   return {
     id: r.id, variant: r.variant, i: r.i, commit: r.commit, run: r.run, conclusion: j.conclusion,
-    queue: t(j.started_at) - t(j.created_at), runner, ...g, work, fixed: runner - work,
+    wall: t(j.completed_at) - t(j.created_at), queue: t(j.started_at) - t(j.created_at), runner, ...g, work, fixed: runner - work,
     boot_setup: g.boot + g.setup, hit: hit(r.quod), quod: r.quod,
   }
 })
@@ -57,13 +57,13 @@ const median = (v) => {
 }
 const sum = (v) => v.reduce((a, b) => a + b, 0)
 const f = (x) => (Number.isFinite(x) ? x.toFixed(0) : '-')
-const keys = ['queue', 'runner', 'boot', 'setup', 'action', 'install', 'build', 'test', 'post', 'fixed', 'boot_setup']
+const keys = ['wall', 'queue', 'runner', 'boot', 'setup', 'action', 'install', 'build', 'test', 'post', 'fixed', 'boot_setup']
 
 const groups = {}
 for (const p of per) (groups[`${p.id} ${p.variant}`] ??= []).push(p)
 const summary = {}
 for (const [k, ps] of Object.entries(groups)) {
-  summary[k] = { jobs: ps.length, corpus_runner_s: sum(ps.map((p) => p.runner)), median: Object.fromEntries(keys.map((x) => [x, median(ps.map((p) => p[x]))])) }
+  summary[k] = { jobs: ps.length, corpus_runner_s: sum(ps.map((p) => p.runner)), corpus_wall_s: sum(ps.map((p) => p.wall)), median: Object.fromEntries(keys.map((x) => [x, median(ps.map((p) => p[x]))])) }
 }
 const all = (v, x) => median(per.filter((p) => p.variant === v).map((p) => p[x]))
 const variants = [...new Set(per.map((p) => p.variant))]
@@ -74,23 +74,23 @@ out.push('### Real jobs: where a job\'s runner-seconds go (jobs API, seconds)')
 out.push('')
 out.push('Medians per project and variant. **fixed** = runner-seconds minus install, build and test steps. **boot+setup** = "Set up job" + checkout + package-manager/node set-up (the kill line is 40 s). Queue is not billed and not in runner.')
 out.push('')
-out.push('| project | variant | jobs | queue | runner | boot | setup | action | install | build | test | post | **fixed** | **boot+setup** | corpus runner-s |')
-out.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|')
+out.push('| project | variant | jobs | wall | queue | runner | boot | setup | action | install | build | test | post | **fixed** | **boot+setup** | corpus wall-s | corpus runner-s |')
+out.push('|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|')
 for (const [k, s] of Object.entries(summary)) {
   const [id, v] = k.split(' ')
   const m = s.median
-  out.push(`| ${id} | ${v} | ${s.jobs} | ${f(m.queue)} | ${f(m.runner)} | ${f(m.boot)} | ${f(m.setup)} | ${f(m.action)} | ${f(m.install)} | ${f(m.build)} | ${f(m.test)} | ${f(m.post)} | **${f(m.fixed)}** | **${f(m.boot_setup)}** | ${f(s.corpus_runner_s)} |`)
+  out.push(`| ${id} | ${v} | ${s.jobs} | ${f(m.wall)} | ${f(m.queue)} | ${f(m.runner)} | ${f(m.boot)} | ${f(m.setup)} | ${f(m.action)} | ${f(m.install)} | ${f(m.build)} | ${f(m.test)} | ${f(m.post)} | **${f(m.fixed)}** | **${f(m.boot_setup)}** | ${f(s.corpus_wall_s)} | ${f(s.corpus_runner_s)} |`)
 }
 for (const v of variants) {
   const m = overall[v]
-  out.push(`| **all** | ${v} | ${per.filter((p) => p.variant === v).length} | ${f(m.queue)} | ${f(m.runner)} | ${f(m.boot)} | ${f(m.setup)} | ${f(m.action)} | ${f(m.install)} | ${f(m.build)} | ${f(m.test)} | ${f(m.post)} | **${f(m.fixed)}** | **${f(m.boot_setup)}** | |`)
+  out.push(`| **all** | ${v} | ${per.filter((p) => p.variant === v).length} | ${f(m.wall)} | ${f(m.queue)} | ${f(m.runner)} | ${f(m.boot)} | ${f(m.setup)} | ${f(m.action)} | ${f(m.install)} | ${f(m.build)} | ${f(m.test)} | ${f(m.post)} | **${f(m.fixed)}** | **${f(m.boot_setup)}** | | |`)
 }
 out.push('')
 out.push('<details><summary>per job</summary>\n')
-out.push('| project | variant | # | commit | run | result | Quod | queue | runner | boot | setup | action | install | build | test | post | fixed |')
-out.push('|---|---|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|')
+out.push('| project | variant | # | commit | run | result | Quod | wall | queue | runner | boot | setup | action | install | build | test | post | fixed |')
+out.push('|---|---|---:|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|')
 for (const p of per.sort((a, b) => a.id.localeCompare(b.id) || a.variant.localeCompare(b.variant) || a.i - b.i))
-  out.push(`| ${p.id} | ${p.variant} | ${p.i} | ${p.commit.slice(0, 9)} | [${p.run}](https://github.com/${process.env.GITHUB_REPOSITORY ?? 'pango07/ci-bench'}/actions/runs/${p.run}) | ${p.conclusion} | ${p.hit ?? ''} | ${f(p.queue)} | ${f(p.runner)} | ${f(p.boot)} | ${f(p.setup)} | ${f(p.action)} | ${f(p.install)} | ${f(p.build)} | ${f(p.test)} | ${f(p.post)} | ${f(p.fixed)} |`)
+  out.push(`| ${p.id} | ${p.variant} | ${p.i} | ${p.commit.slice(0, 9)} | [${p.run}](https://github.com/${process.env.GITHUB_REPOSITORY ?? 'pango07/ci-bench'}/actions/runs/${p.run}) | ${p.conclusion} | ${p.hit ?? ''} | ${f(p.wall)} | ${f(p.queue)} | ${f(p.runner)} | ${f(p.boot)} | ${f(p.setup)} | ${f(p.action)} | ${f(p.install)} | ${f(p.build)} | ${f(p.test)} | ${f(p.post)} | ${f(p.fixed)} |`)
 out.push('\n</details>\n')
 if (outDir) fs.writeFileSync(path.join(outDir, 'job-metrics.json'), JSON.stringify({ overall, summary, per }, null, 1))
 console.log(out.join('\n'))
