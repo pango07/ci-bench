@@ -20,7 +20,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const [file, outDir] = process.argv.slice(2)
-const J = Number(process.env.JOB_FIXED_MS ?? 15000)
+// Measured (bench-job run 41945160971, 24 plain jobs of zustand, convex-helpers,
+// mcp-sdk and vercel-ai, jobs API): median runner-seconds outside the
+// install, build and test steps of a plain job = 12 s (8 s set-up job,
+// checkout and package-manager/node set-up; the rest post steps and gaps).
+// The action adds a median 6 s more per job (its main and post steps).
+const J = Number(process.env.JOB_FIXED_MS ?? 12000)
 const lines = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
 const isFirst = (r) => r.first || r.warmup
 
@@ -124,7 +129,7 @@ if (outDir) fs.writeFileSync(path.join(outDir, 'metrics.json'), JSON.stringify(m
 const out = []
 out.push(`### CI fast and CI cost versus plain CI${shadowLine ? ' (shadow line: check job + shadow job)' : ' (one job)'}`)
 out.push('')
-out.push(`Ratio = Quod / plain; below 1.00 is better. **CI fast**: job start until the check is done (install + test step; critical path only). **CI cost**: runner-seconds across every job${shadowLine ? ', the shadow job (its own install and the recording run) included' : ''}. Install measured per commit (fresh \`pnpm install --frozen-lockfile --prefer-offline\`, warm store). Each job also carries an **estimated** ${s(J)} s fixed overhead (set-up, checkout, cache; \`JOB_FIXED_MS\`), not measured.`)
+out.push(`Ratio = Quod / plain; below 1.00 is better. **CI fast**: job start until the check is done (install + test step; critical path only). **CI cost**: runner-seconds across every job${shadowLine ? ', the shadow job (its own install and the recording run) included' : ''}. Install measured per commit (fresh \`pnpm install --frozen-lockfile --prefer-offline\`, warm store). Each job also carries a ${s(J)} s fixed overhead (set-up, checkout, post steps; \`JOB_FIXED_MS\`, the median measured on real plain jobs by bench-job.yml).`)
 out.push('')
 out.push('| | plain | Quod | ratio (total) | median per-commit ratio |')
 out.push('|---|---:|---:|---:|---:|')
