@@ -25,7 +25,7 @@ cfg() { # the corpus entry's set-up flags and commands, as bench-job-one's `cfg`
     if (!e) { console.error("no corpus entry " + process.argv[2]); process.exit(1) }
     // TURBO_FORCE is the in-place bench'"'"'s (one checkout, many runs); a fresh job has no local turbo cache.
     let env = (e.env ?? "").split(/\s+/).filter((kv) => kv && !kv.startsWith("TURBO_FORCE=")).join(" ")
-    if (process.argv[3] === "quod-ts-proof") env += " QUOD_VITEST_NAMES_PROOF=1"
+    if (process.argv[3] === "quod-proof" || process.argv[3] === "quod-ts-proof") env += " QUOD_VITEST_NAMES_PROOF=1"
     if (process.argv[3] === "quod-ts-control") env += " QUOD_VITEST_NAMES_PROOF=0"
     const c = { pnpm: !!e.pnpm, bun: !!e.bun, corepack: !!e.corepack, corepack_first: !!e.corepack_first, node: e.node ?? "", node_file: e.node_file ?? "", bun_file: e.bun_file ?? "",
       install: e.install, build: e.build ?? "", test: e.test, workdir: e.workdir ?? ".", env }
