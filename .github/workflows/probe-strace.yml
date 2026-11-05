@@ -23,17 +23,30 @@ jobs:
       - run: npm ci
       - name: plain
         run: |
-          /usr/bin/time -f "plain test:release %e s" npm run test:release > /dev/null 2>&1
-          /usr/bin/time -f "plain build %e s" npm run build > /dev/null 2>&1
-          /usr/bin/time -f "plain test:release %e s" npm run test:release > /dev/null 2>&1
-      - name: strace
+          t() { /usr/bin/time -o /tmp/t -f "%e" "$@" > /dev/null 2>&1; echo "$(cat /tmp/t)"; }
+          for i in 1 2 3; do echo "plain test:release $(t npm run test:release) s"; done
+          for i in 1 2; do echo "plain build $(t npm run build) s"; done
+          for i in 1 2; do echo "plain(UV_USE_IO_URING=0) test:release $(UV_USE_IO_URING=0 t npm run test:release) s"; done
+      - name: strace without --seccomp-bpf (the old probe)
         run: |
+          t() { /usr/bin/time -o /tmp/t -f "%e" "$@" > /dev/null 2>&1; echo "$(cat /tmp/t)"; }
           T='trace=%file,%process,getdents64,connect,io_uring_setup'
-          /usr/bin/time -f "strace test:release %e s" strace -f -qq -y -e $T -o /tmp/tr.log npm run test:release > /dev/null 2>&1
-          /usr/bin/time -f "strace build %e s" strace -f -qq -y -e $T -o /tmp/bu.log npm run build > /dev/null 2>&1
-          for f in /tmp/tr.log /tmp/bu.log; do
-            echo "$f: $(wc -l < $f) lines, $(grep -c 'execve(' $f) execs, $(grep -c io_uring_setup $f) io_uring, $(grep -c 'connect(' $f) connects"
+          echo "strace test:release $(t strace -f -qq -y -e $T -o /tmp/old.log npm run test:release) s"
+      - name: strace --seccomp-bpf, UV_USE_IO_URING=0 (through-the-wall B1)
+        run: |
+          t() { /usr/bin/time -o /tmp/t -f "%e" "$@" > /dev/null 2>&1; echo "$(cat /tmp/t)"; }
+          T='trace=%file,%process,getdents64,%network,io_uring_setup,io_uring_enter,io_uring_register'
+          S="strace -f --seccomp-bpf -qq -yy -s 4096 -e $T"
+          export UV_USE_IO_URING=0
+          for i in 1 2 3; do echo "seccomp test:release $(t $S -o /tmp/tr$i.log npm run test:release) s"; done
+          for i in 1 2; do echo "seccomp build $(t $S -o /tmp/bu$i.log npm run build) s"; done
+          # without -s 4096 -yy (cheaper decoding), for the record
+          echo "seccomp-lite test:release $(t strace -f --seccomp-bpf -qq -y -e $T -o /tmp/lite.log npm run test:release) s"
+          for f in /tmp/tr1.log /tmp/bu1.log; do
+            echo "$f: $(wc -l < $f) lines, $(grep -c 'execve(' $f) execs, $(grep -c 'io_uring_setup(' $f) io_uring_setup, $(grep -c 'connect(' $f) connects, $(du -h $f | cut -f1)"
             grep -oE '"(/[^"]*)"' $f | sort -u | wc -l | xargs echo "distinct absolute paths:"
-            grep -oE 'execve\("[^"]*"' $f | sort | uniq -c | sort -rn | head -8
+            grep -oE 'execve\("[^"]*"' $f | sort | uniq -c | sort -rn | head -6
           done
-          grep 'connect(' /tmp/tr.log | head -5
+          grep 'connect(' /tmp/tr1.log | head -5
+          grep -c 'io_uring' /tmp/old.log | xargs echo "io_uring lines without UV_USE_IO_URING=0:"
+          strace -V | head -1
