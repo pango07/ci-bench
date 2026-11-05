@@ -19,12 +19,13 @@ jobs:
           gh release download bin-e3ece95 -R pango07/ci-bench -p 'quod-linux-x86_64.tar.gz' -D $RUNNER_TEMP/q
           tar -xzf $RUNNER_TEMP/q/*.tar.gz -C $RUNNER_TEMP/q; Q=$RUNNER_TEMP/q/quod
           ls -ld /home/runner /home/runner/work
+          set +e
           for who in "" "sudo env HOME=/root PATH=$PATH"; do
             W=$GITHUB_WORKSPACE/e2e$RANDOM; mkdir -p $W/repo; echo one > $W/repo/in.txt; cd $W/repo
             [ -n "$who" ] && sudo chown -R root:root $W
             echo "=== who: [${who:0:4}]"
             for i in 1 2 3; do $who $Q unit --dir $W/units --root $W/repo -- sh -c 'mkdir -p out && cat in.txt > out/o.txt && echo built'; echo "exit $?"; $who rm -rf out; done
-            $who sh -c "ls -la $W/units/*/ 2>&1; head -c 1500 $W/units/*/trace.log 2>/dev/null"
+            $who sh -c "ls -la $W/units/*/ 2>&1; head -c 1500 $W/units/*/trace.log 2>/dev/null; true"
           done
           B="--dev-bind / / --tmpfs /tmp --proc /proc --unshare-net --unshare-pid --die-with-parent"
           sudo bwrap $B --cap-add ALL --chdir $GITHUB_WORKSPACE -- sh -c 'id; grep Cap /proc/self/status; strace -f -o /dev/null true; echo strace $?'
