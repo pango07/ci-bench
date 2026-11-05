@@ -41,21 +41,23 @@ const table = (log) => {
   } catch {
     return null
   }
-  const out = []
-  let on = false
+  // One block per table; several packages run in parallel (pnpm -r, turbo)
+  // print theirs in no fixed order, so the blocks are compared sorted.
+  const blocks = []
+  let out = null
   for (const line of s.split('\n')) {
     const l = line.replace(/\x1b\[[0-9;]*m/g, '')
     if (/Coverage report from/.test(l)) {
-      on = true
-      out.push(l.trim())
+      out = [l.trim()]
+      blocks.push(out)
       continue
     }
-    if (!on || /quod( vitest)?:/.test(l)) continue
+    if (!out || /quod( vitest)?:/.test(l)) continue
     // a table row or rule has a column per metric; anything else ends it
     if ((l.match(/\|/g) ?? []).length >= 4) out.push(l.trimEnd())
-    else if (l.trim() && !/^[-\s]+$/.test(l)) on = false
+    else if (l.trim() && !/^[-\s]+$/.test(l)) out = null
   }
-  return out.length ? out.join('\n') : null
+  return blocks.length ? blocks.map((b) => b.join('\n')).sort().join('\n') : null
 }
 const r = { files: 0, same: 0, diffs: [], plain_files: ls(pd).length, check_files: ls(cd).length }
 for (const f of [...new Set([...ls(pd), ...ls(cd)])]) {

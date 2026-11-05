@@ -147,6 +147,8 @@ for i in "${!commits[@]}"; do
       (cd "$proj/${DROPIN_WORKDIR:-.}" && QUOD_DISABLE=1 bash -c "$DROPIN_TEST") >"$out/logs/probe-disable.log" 2>&1
       n=$(ls "$Q/reports" | wc -l)
       echo "probe: with QUOD_DISABLE=1 in the environment, Quod still ran $n vitest command lines" | tee -a "$out/logs/probe.log"
+      # Whatever that run recorded is not a witness the product would have.
+      ledger_from -1; rm -rf "$Q/reports"
     fi
   fi
   keep=$out/runs/$i/check-out; mkdir -p "$keep"
@@ -202,16 +204,23 @@ for i in "${!commits[@]}"; do
     const P = JSON.parse(pc), Q = JSON.parse(qc)
     const countsMatch = JSON.stringify(P.files) === JSON.stringify(Q.files) && JSON.stringify(P.tests) === JSON.stringify(Q.tests)
     const noReport = (k.missing ?? []).filter((m) => /no check report/.test(m))
+    // A counts difference is wrong only when a command line compared this
+    // way replayed something; else both runs ran vitest and differ by what
+    // ran (turbo stops scheduling at the first failed task, in no fixed order).
+    let countsUncomparable = false
     if (noReport.length && !k.error) {
       k.missing = k.missing.filter((m) => !/no check report/.test(m))
-      if (!countsMatch) k.wrong.push({ file: "(counts)", plain: JSON.stringify(P), check: JSON.stringify(Q), minus: [], plus: [] })
+      const keysNoReport = new Set(noReport.map((m) => m.split(":")[0]))
+      const replayedThere = (k.per_key ?? []).some((x) => keysNoReport.has(x.key) && x.replayed > 0)
+      if (!countsMatch && replayedThere) k.wrong.push({ file: "(counts)", plain: JSON.stringify(P), check: JSON.stringify(Q), minus: [], plus: [] })
+      else if (!countsMatch) countsUncomparable = true
     }
     const row = { i: +i, first: i === "0", commit: c, subject,
       plain_ms: +p_ms, plain_exit: +p_rc, ...(process.env.DROPIN_MODE_EFF === "witness" ? { quod_ms: +q_ms, quod_exit: +q_rc, mode: "witness" } : { crit_ms: +q_ms, crit_exit: +q_rc, shadow_ms: +sh_ms, shadow_exit: +sh_rc, mode: "shadow" }),
       install_ms: +install_ms + +build_ms, install_only_ms: +install_ms, build_ms: +build_ms, install_rc: +irc, build_rc: +brc,
       recorded: +recorded, invocations: k.invocations ?? 0, intercepted: k.intercepted ?? 0, files: k.files ?? 0, ran: k.ran ?? 0, replayed: k.replayed ?? 0,
       wrong: k.error ? null : k.wrong.map((w) => w.file), wrong_detail: k.wrong, flaky: k.flaky?.map((w) => w.file) ?? null, flaky_detail: k.flaky,
-      check_from_quod_report: k.check_from_quod_report ?? 0, compared_by_counts: noReport.length, counts_plain: P, counts_check: Q, counts_match: countsMatch, missing: k.missing ?? [], declined: k.declined ?? [], shadow_diff: k.shadow_diff ?? [], per_key: k.per_key, compare_error: k.error,
+      check_from_quod_report: k.check_from_quod_report ?? 0, compared_by_counts: noReport.length, counts_uncomparable: countsUncomparable, counts_plain: P, counts_check: Q, counts_match: countsMatch, missing: k.missing ?? [], declined: k.declined ?? [], shadow_diff: k.shadow_diff ?? [], per_key: k.per_key, compare_error: k.error,
       quod_check_log: ql, quod_shadow_log: sl, cov }
     console.log(JSON.stringify(row))
   ' "$i" "$c" "$(git log -1 --format=%s "$c")" "$p_ms" "$p_rc" "$q_ms" "$q_rc" "$sh_ms" "$sh_rc" "$install_ms" "$build_ms" "$irc" "$brc" "$recorded" "$cmp" "$quodlines" "$shlines" "$pc" "$qc" "$covc" | tee -a "$out/results.jsonl"
@@ -245,17 +254,17 @@ QUOD_SHIM_ACTIVE=1 "$REAL" -e '
   const files = l.reduce((n, r) => n + (r.cov?.files ?? 0), 0), same = l.reduce((n, r) => n + (r.cov?.same ?? 0), 0)
   // A difference is wrong unless a second plain run differs from the first
   // in the same output (then the coverage itself is not deterministic).
-  // Where Quod never engaged (the check run was plain vitest), any
-  // difference is plain against plain.
-  const bad = l.filter((r) => r.cov?.diffs?.length && r.intercepted > 0)
-  const nondet = l.filter((r) => r.cov?.nondet?.length || (r.cov?.diffs?.length && !(r.intercepted > 0)))
+  // Where the Quod run replayed nothing (it ran every file through vitest),
+  // a difference is vitest's own, not a replay's.
+  const bad = l.filter((r) => r.cov?.diffs?.length && r.replayed > 0)
+  const nondet = l.filter((r) => r.cov?.nondet?.length || (r.cov?.diffs?.length && !(r.replayed > 0)))
   console.log(`\n### Coverage outputs, plain against Quod\n\n${files ? `${same} of ${files} coverage outputs identical over ${l.length} commits (coverage-final.json, lcov.info, coverage-summary.json, clover.xml without timestamps, the text table)` : "no coverage outputs on any commit"}; ${bad.length ? `WRONG (differences plain itself does not show) on commits ${bad.map((r) => r.i).join(",")}: ${JSON.stringify(bad[0].cov.diffs.slice(0, 4))}` : "0 wrong differences"}${nondet.length ? `; plain vitest differs from itself (a second plain run) in the same outputs on commits ${nondet.map((r) => r.i).join(",")}: ${JSON.stringify((nondet[0].cov.plain_vs_plain ?? nondet[0].cov.diffs).slice(0, 3))}` : ""}`)
   const t = l.find((r) => r.cov?.totals)?.cov.totals; if (t) console.log(`\nplain totals (first commit with a summary): ${JSON.stringify(t)}`)
 ' "$out/results.jsonl" >> "$out/report.md"
 cat "$out/report.md" | tail -4
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$out/report.md" "$out/ci.md" >> "$GITHUB_STEP_SUMMARY"
 # Loud: a wrong replay fails the job.
-if QUOD_SHIM_ACTIVE=1 "$REAL" -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n").map(JSON.parse);process.exit(l.some(r=>r.wrong===null||r.wrong.length||r.cov?.diffs?.length&&r.intercepted>0)?1:0)' "$out/results.jsonl"; then
+if QUOD_SHIM_ACTIVE=1 "$REAL" -e 'const l=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n").map(JSON.parse);process.exit(l.some(r=>r.wrong===null||r.wrong.length||r.cov?.diffs?.length&&r.replayed>0)?1:0)' "$out/results.jsonl"; then
   echo "0 wrong replays"
 else
   echo "::error::WRONG REPLAYS (or an uncompared commit): see report.md"; exit 1
