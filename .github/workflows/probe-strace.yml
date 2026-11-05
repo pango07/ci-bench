@@ -25,6 +25,13 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm ci
+      - name: bwrap as root
+        run: |
+          sudo mkdir -p /opt/rt && sudo chmod 755 /opt/rt
+          B="--dev-bind / / --tmpfs /tmp --proc /proc --unshare-net --unshare-pid --die-with-parent"
+          for extra in "" "--uid 0 --gid 0" "--cap-add ALL" "--unshare-user --uid 0 --gid 0"; do
+            echo "== [$extra] $(sudo bwrap $B $extra -- sh -c 'id; touch /opt/rt/x && echo wrote; cat /proc/self/uid_map' 2>&1 | tr '\n' ' ')"
+          done
       - name: quod unit as root (the gate's e2e)
         env:
           BIN: ${{ github.event.inputs.bin || 'bin-cb5d92d' }}
