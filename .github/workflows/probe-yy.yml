@@ -1,0 +1,36 @@
+# through-the-wall C3: what strace's fd decoding (-yy: a readlink of
+# /proc/pid/fd/N per printed fd) costs on convex-helpers' test:release,
+# against no decoding at all (the parser would keep an fd table instead).
+name: probe-yy
+on:
+  push:
+    branches: ['probe/runner']
+    paths: ['.github/workflows/probe-yy.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: get-convex/convex-helpers
+          ref: 5eaa7e5160736054d53f8b71e2c522835eb427e0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci
+      - name: -yy against no fd decoding, interleaved
+        run: |
+          t() { /usr/bin/time -o /tmp/t -f "%e" "$@" > /dev/null 2>&1; echo "$(cat /tmp/t)"; }
+          T='trace=%file,%process,getdents64,getdents,%network,io_uring_setup,io_uring_enter,io_uring_register'
+          B="bwrap --dev-bind / / --tmpfs /tmp --proc /proc --unshare-net --unshare-pid --die-with-parent"
+          I="-e inject=io_uring_setup:error=ENOSYS"
+          echo "warm plain $(t npm run test:release) s"
+          for i in 1 2 3; do
+            echo "yy test:release $(t $B -- strace -f --seccomp-bpf -qq -yy -s 4096 -e $T $I -o $RUNNER_TEMP/yy.log npm run test:release) s"
+            echo "none test:release $(t $B -- strace -f --seccomp-bpf -qq -s 4096 -e $T $I -o $RUNNER_TEMP/no.log npm run test:release) s"
+            echo "plain test:release $(t $B -- npm run test:release) s"
+          done
+          wc -l $RUNNER_TEMP/yy.log $RUNNER_TEMP/no.log
