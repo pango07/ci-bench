@@ -21,6 +21,18 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm ci
+      - name: lost parent (quod unit on build)
+        run: |
+          B="bwrap --dev-bind / / --tmpfs /tmp --proc /proc --unshare-net --unshare-pid --die-with-parent"
+          T='trace=%file,%process,getdents64,getdents,%network,io_uring_setup,io_uring_enter,io_uring_register'
+          $B -- strace -f --seccomp-bpf -qq -yy -s 4096 -e $T -e inject=io_uring_setup:error=ENOSYS -o $RUNNER_TEMP/b.log npm run build > /dev/null 2>&1
+          f=$RUNNER_TEMP/b.log
+          head -3 $f | cut -c1-200
+          awk '{print $1}' $f | awk '!s[$0]++' | head -30 | tr '\n' ' '; echo
+          for p in $(awk '{print $1}' $f | awk '!s[$0]++' | head -30); do
+            echo "== $p first: $(grep -m1 "^$p " $f | cut -c1-160)"
+            grep -nE "(clone|clone3|fork|vfork).*= $p\b|resumed.*= $p$" $f | head -2 | cut -c1-220
+          done
       - name: plain
         run: |
           t() { /usr/bin/time -o /tmp/t -f "%e" "$@" > /dev/null 2>&1; echo "$(cat /tmp/t)"; }
