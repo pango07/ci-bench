@@ -30,6 +30,10 @@ on:
         description: Comma-separated variants (plain, quod-shipped, quod)
         required: false
         default: plain,quod-shipped
+      warm_first:
+        description: Diagnostic only; repeat the first commit once to confirm its initial records
+        required: false
+        default: 'false'
   # Registers the workflow while it lives only on this branch; the job runs on dispatch only.
   push:
     branches: ['bench/whole-job']
@@ -53,6 +57,7 @@ jobs:
           COMMITS: ${{ inputs.commits }}
           VARIANTS: ${{ inputs.variants }}
           BJ_END: ${{ inputs.end }}
+          BJ_REPEAT_FIRST: ${{ inputs.warm_first }}
         run: bash scripts/job/drive.sh "$ONLY" "$COMMITS" "$VARIANTS"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

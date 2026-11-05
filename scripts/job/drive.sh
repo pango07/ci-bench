@@ -24,10 +24,12 @@ cfg() { # the corpus entry's set-up flags and commands, as bench-job-one's `cfg`
     const e = require(process.argv[1]).find((x) => x.id === process.argv[2])
     if (!e) { console.error("no corpus entry " + process.argv[2]); process.exit(1) }
     // TURBO_FORCE is the in-place bench'"'"'s (one checkout, many runs); a fresh job has no local turbo cache.
-    const env = (e.env ?? "").split(/\s+/).filter((kv) => kv && !kv.startsWith("TURBO_FORCE=")).join(" ")
+    let env = (e.env ?? "").split(/\s+/).filter((kv) => kv && !kv.startsWith("TURBO_FORCE=")).join(" ")
+    if (process.argv[3] === "quod-ts-proof") env += " QUOD_VITEST_NAMES_PROOF=1"
+    if (process.argv[3] === "quod-ts-control") env += " QUOD_VITEST_NAMES_PROOF=0"
     const c = { pnpm: !!e.pnpm, bun: !!e.bun, corepack: !!e.corepack, corepack_first: !!e.corepack_first, node: e.node ?? "", node_file: e.node_file ?? "", bun_file: e.bun_file ?? "",
       install: e.install, build: e.build ?? "", test: e.test, workdir: e.workdir ?? ".", env }
-    console.log(JSON.stringify(c))' "$corpus" "$1"
+    console.log(JSON.stringify(c))' "$corpus" "$1" "$2"
 }
 meta() { node -e 'const e=require(process.argv[1]).find(x=>x.id===process.argv[2]);console.log(e[process.argv[3]])' "$corpus" "$1" "$2"; }
 
@@ -52,7 +54,7 @@ wait_run() { # tag branch -> run id once it completes
 chain() { # id variant
   local id=$1 v=$2 repo sha c br i tag rid
   local -a dispatched=()
-  repo=$(meta "$id" repo); c=$(cfg "$id") || return 1
+  repo=$(meta "$id" repo); c=$(cfg "$id" "$v") || return 1
   mapfile -t cs < "$out/src/$id.commits"
   br=$GITHUB_REF_NAME
   if [ "$v" != plain ]; then
@@ -86,6 +88,13 @@ for id in "${IDS[@]}"; do
   repo=$(meta "$id" repo); end=${BJ_END:-$(meta "$id" sha)}
   git clone -q --filter=blob:none --no-checkout "https://github.com/$repo" "$out/src/$id"
   git -C "$out/src/$id" rev-list --first-parent -n "$commits" "$end" | tac > "$out/src/$id.commits"
+  if [ "${BJ_REPEAT_FIRST:-false}" = true ]; then
+    # Repeat for every variant, preserving comparable indices and reporting
+    # the cold and confirming jobs separately from subsequent changed commits.
+    { head -1 "$out/src/$id.commits"; cat "$out/src/$id.commits"; } > "$out/src/$id.repeat"
+    mv "$out/src/$id.repeat" "$out/src/$id.commits"
+    echo "$id: diagnostic repeats the first commit for a plain witness"
+  fi
   echo "$id: $(wc -l < "$out/src/$id.commits") commits ending at ${end:0:9}"
   i=0
   while read -r sha; do

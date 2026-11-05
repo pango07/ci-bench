@@ -43,11 +43,11 @@ function hit(q) {
 }
 
 // The wrong check: every job's test lines (drive.sh `sig`) and conclusion
-// against plain's job of the same project and commit.
-const plainOf = new Map(rows.filter((r) => r.variant === 'plain').map((r) => [`${r.id} ${r.commit}`, r]))
+// against plain's job of the same project, commit and window position.
+const plainOf = new Map(rows.filter((r) => r.variant === 'plain').map((r) => [`${r.id} ${r.i} ${r.commit}`, r]))
 function wrong(r) {
   if (r.variant === 'plain' || r.variant === 'floor') return null
-  const p = plainOf.get(`${r.id} ${r.commit}`)
+  const p = plainOf.get(`${r.id} ${r.i} ${r.commit}`)
   if (!p || !p.sig || !r.sig) return null
   if ((r.evidence || p.evidence) && (!p.semantic || !r.semantic)) return null
   const diff = []
@@ -135,14 +135,14 @@ if (wrongs.length) {
   for (const p of wrongs) out.push(`- ${p.id} ${p.variant} #${p.i} ${p.commit.slice(0, 9)}: ${p.wrong.slice(0, 6).join('; ')}`)
 }
 out.push('')
-out.push('| variant | c1–c11 runner-s | x plain | billed min | x plain | best hit above floor | median hit above floor | lineage audits | disagreed |')
+out.push('| variant | after-first-job runner-s | x plain | billed min | x plain | best hit above floor | median hit above floor | lineage audits | disagreed |')
 out.push('|---|---:|---:|---:|---:|---:|---:|---:|---:|')
 for (const v of variants.filter(v => !['plain', 'floor'].includes(v))) {
   const ps = per.filter(p => p.variant === v)
   const warm = ps.filter(p => p.i > 0)
   const pl = per.filter(p => p.variant === 'plain' && p.i > 0)
   const hitGaps = ps.filter(p => p.hit === 'hit').flatMap(p => {
-    const floor = per.find(x => x.variant === 'floor' && x.id === p.id && x.commit === p.commit)
+    const floor = per.find(x => x.variant === 'floor' && x.id === p.id && x.i === p.i && x.commit === p.commit)
     return floor ? [p.runner - floor.runner] : []
   })
   out.push(`| ${v} | ${sum(warm.map(p=>p.runner))} | ${(sum(warm.map(p=>p.runner))/sum(pl.map(p=>p.runner))).toFixed(2)} | ${sum(warm.map(p=>p.billed))} | ${(sum(warm.map(p=>p.billed))/sum(pl.map(p=>p.billed))).toFixed(2)} | ${hitGaps.length ? 'floor + ' + f(Math.min(...hitGaps)) + ' s' : 'no full hits'} | ${hitGaps.length ? 'floor + ' + f(median(hitGaps)) + ' s' : 'no full hits'} | ${sum(ps.map(p=>p.lineage.audits))} | ${sum(ps.map(p=>p.lineage.disagreed))} |`)

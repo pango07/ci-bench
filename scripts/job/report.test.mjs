@@ -21,6 +21,14 @@ function report(rows, expected) {
   } finally { fs.rmSync(dir, { recursive: true, force: true }) }
 }
 test('complete agreeing comparisons pass', () => assert.equal(report([row('plain'), row('quod')]).status, 0))
+test('repeated commits compare against their own window positions', () => {
+  const p0 = row('plain'), q0 = row('quod')
+  const p1 = {...row('plain', 'second invocation\n'), i:1}
+  const q1 = {...row('quod', 'second invocation\n'), i:1}
+  assert.equal(report([p0,q0,p1,q1]).status, 0)
+  q0.sig = p1.sig
+  assert.equal(report([p0,q0,p1,q1]).status, 1)
+})
 test('missing logs fail verification', () => {
   const result = report([row('plain'), row('quod', '')])
   assert.equal(result.status, 1)
