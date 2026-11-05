@@ -23,7 +23,7 @@ on:
         description: The project commit
         required: true
       variant:
-        description: plain | quod-shipped
+        description: plain | quod-shipped | quod
         required: true
       cfg:
         description: 'JSON: {pnpm, bun, corepack, corepack_first, node, node_file, bun_file, install, build, test, env}'
@@ -75,6 +75,14 @@ jobs:
         with:
           version: bin-32b630c
           sha256: e8b13b01329218d941177d61f381eb7341f152cdf65931b5ff06f121a06a3c3d
+
+      # ---- the line under development: quod-action exp/whole-job ----
+      - name: quod
+        if: inputs.variant == 'quod'
+        uses: pango07/quod-action@8e5cce6fa6a75dac724d24fd1fef47839edd6ee4 # exp/whole-job
+        with:
+          version: bin-b4c77da
+          sha256: b73ef7b2628f8d062ba7e7eaf093a98aa94a2c5a319bd4ab026572d0e6c06160
 
       - name: env
         env:
