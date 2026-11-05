@@ -88,10 +88,10 @@ jobs:
         run: a=${V#quod-ts}; [[ "$V" == quod-ts* && "$a" =~ ^[0-9]+$ ]] || a=0; echo "audit=$a" >> "$GITHUB_OUTPUT"
       - name: quod
         if: startsWith(inputs.variant, 'quod') && inputs.variant != 'quod-shipped'
-        uses: pango07/quod-action@ffc6b9828842b326692d197b72ec6f722a5a4e4c # exp/whole-job
+        uses: pango07/quod-action@772c1bc064a53e8e3a0c7d4ece6cb90bcec569db # exp/whole-job
         with:
-          version: bin-72066c7
-          sha256: 49a1291c38576edd4f944c1a434e286a6efc3b3291b6ad57140adc67039bec67
+          version: bin-fba26ea
+          sha256: c76a8ec8098247ff4ca154a6333b54e620a0ca3a8b5b8e46aea53d59413ef37e
           cloud: 'false'
           task-cache: 'false'
           timing-sensitive: ${{ startsWith(inputs.variant, 'quod-ts') && 'replay' || 'off' }}
