@@ -50,3 +50,20 @@ jobs:
           grep 'connect(' /tmp/tr1.log | head -5
           grep -c 'io_uring' /tmp/old.log | xargs echo "io_uring lines without UV_USE_IO_URING=0:"
           strace -V | head -1
+          grep -m3 'io_uring_setup(' /tmp/tr1.log
+      - name: strace --seccomp-bpf, io_uring_setup refused (inject ENOSYS), in bwrap
+        run: |
+          t() { /usr/bin/time -o /tmp/t -f "%e" "$@" > /dev/null 2>&1; echo "$(cat /tmp/t)"; }
+          T='trace=%file,%process,getdents64,%network,io_uring_setup,io_uring_enter,io_uring_register'
+          S="strace -f --seccomp-bpf -qq -yy -s 4096 -e $T -e inject=io_uring_setup:error=ENOSYS"
+          for i in 1 2; do echo "inject test:release $(t $S -o /tmp/in$i.log npm run test:release) s"; done
+          echo "inject build $(t $S -o /tmp/inb.log npm run build) s"
+          for f in /tmp/in1.log /tmp/inb.log; do
+            echo "$f: $(grep -c 'io_uring_setup(' $f) io_uring_setup, $(grep 'io_uring_setup(' $f | grep -vc 'ENOSYS') not refused, $(grep -c 'io_uring_enter(' $f) enter"
+          done
+          B="bwrap --dev-bind / / --tmpfs /tmp --proc /proc --unshare-net --unshare-pid --die-with-parent"
+          echo "bwrap plain test:release $(t $B -- npm run test:release) s"
+          echo "bwrap inject test:release $(t $B -- $S -o $RUNNER_TEMP/bw.log npm run test:release) s"
+          echo "bwrap inject build $(t $B -- $S -o $RUNNER_TEMP/bwb.log npm run build) s"
+          $B -- npm run test:release 2>&1 | tail -12
+          grep -c 'io_uring_setup(' $RUNNER_TEMP/bw.log
