@@ -1,0 +1,96 @@
+# One real CI job of one corpus project at one commit, as its CI has it:
+# checkout, the package-manager / node set-up, (variant quod-shipped: the
+# action line), install, build, test. bench-job.yml dispatches it once per
+# (project, commit, variant) and reads its timings from the jobs API
+# (docs/whole-job-replay.md section 6 in pango07/quod). Nothing here times
+# itself: every step is its own step so the jobs API has its duration.
+#
+# Not meant to be dispatched by hand; bench-job.yml passes `cfg` (the corpus
+# entry's set-up flags and commands, JSON).
+name: bench-job-one
+run-name: bench-job-one ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Unique name for this run (the driver finds the run by it)
+        required: true
+      repo:
+        description: owner/name of the project
+        required: true
+      commit:
+        description: The project commit
+        required: true
+      variant:
+        description: plain | quod-shipped
+        required: true
+      cfg:
+        description: 'JSON: {pnpm, bun, corepack, corepack_first, node, node_file, bun_file, install, build, test, env}'
+        required: true
+  # Registers the workflow while it lives only on this branch; the job runs on dispatch only.
+  push:
+    branches: ['bench/whole-job']
+    paths: ['.github/workflows/bench-job-one.yml']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  job:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - name: corepack enable (before setup-node)
+        if: fromJSON(inputs.cfg).corepack_first
+        run: corepack enable
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+        if: fromJSON(inputs.cfg).pnpm
+      - uses: oven-sh/setup-bun@v2
+        if: fromJSON(inputs.cfg).bun
+        with:
+          bun-version-file: ${{ fromJSON(inputs.cfg).bun_file }}
+      - uses: actions/setup-node@v6
+        if: fromJSON(inputs.cfg).node != '' || fromJSON(inputs.cfg).node_file != ''
+        with:
+          node-version: ${{ fromJSON(inputs.cfg).node }}
+          node-version-file: ${{ fromJSON(inputs.cfg).node_file }}
+      - name: corepack enable
+        if: fromJSON(inputs.cfg).corepack
+        run: corepack enable
+
+      # ---- the one line a customer adds: the action as shipped on exp/supported-v1, at its defaults
+      # (dependencies, task-cache and cloud on), with the quod the 14-repo bench ran ----
+      - name: quod
+        if: inputs.variant == 'quod-shipped'
+        uses: pango07/quod-action@76297ed9712e1e76381211b6d6f92c7b699e3aab # exp/supported-v1
+        with:
+          version: bin-32b630c
+          sha256: e8b13b01329218d941177d61f381eb7341f152cdf65931b5ff06f121a06a3c3d
+
+      - name: env
+        env:
+          E: ${{ fromJSON(inputs.cfg).env }}
+        run: for kv in $E; do echo "$kv" >> "$GITHUB_ENV"; done
+      - name: install
+        env:
+          CMD: ${{ fromJSON(inputs.cfg).install }}
+        run: bash -c "$CMD"
+      - name: build
+        if: fromJSON(inputs.cfg).build != ''
+        env:
+          CMD: ${{ fromJSON(inputs.cfg).build }}
+        run: bash -c "$CMD"
+      - name: test
+        env:
+          CMD: ${{ fromJSON(inputs.cfg).test }}
+          WD: ${{ fromJSON(inputs.cfg).workdir || '.' }}
+        run: cd "$WD" && bash -c "$CMD"

@@ -1,0 +1,60 @@
+# Whole jobs, measured as GitHub bills them (pango07/quod
+# docs/whole-job-replay.md, section 6): per (project, commit, variant) one
+# real job (bench-job-one.yml: checkout, set-up, [the action line], install,
+# build, test), commits in order per project and variant so each job
+# restores what the previous one saved. Timings from the jobs API
+# (scripts/job/report.mjs): queue, runner-seconds, and per step group, so
+# the fixed overhead of a job (everything but install, build and test) is
+# measured, not assumed.
+#
+#   gh workflow run bench-job.yml -R pango07/ci-bench --ref bench/whole-job
+#   gh workflow run bench-job.yml -R pango07/ci-bench --ref bench/whole-job -f only=zustand -f commits=3
+name: bench-job
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: Comma-separated corpus ids
+        required: false
+        default: zustand,convex-helpers,mcp-sdk,vercel-ai
+      commits:
+        description: Consecutive first-parent commits per project, ending at the corpus sha
+        required: false
+        default: '6'
+      variants:
+        description: Comma-separated variants (plain, quod-shipped)
+        required: false
+        default: plain,quod-shipped
+  # Registers the workflow while it lives only on this branch; the job runs on dispatch only.
+  push:
+    branches: ['bench/whole-job']
+    paths: ['.github/workflows/bench-job.yml']
+
+permissions:
+  contents: write   # the per-chain branches (created, then deleted)
+  actions: write    # dispatching bench-job-one.yml
+
+jobs:
+  drive:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: drive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ONLY: ${{ inputs.only }}
+          COMMITS: ${{ inputs.commits }}
+          VARIANTS: ${{ inputs.variants }}
+        run: bash scripts/job/drive.sh "$ONLY" "$COMMITS" "$VARIANTS"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: bench-job
+          path: |
+            ${{ runner.temp }}/bj/jobs.jsonl
+            ${{ runner.temp }}/bj/job-metrics.json
+            ${{ runner.temp }}/bj/report.md
+          if-no-files-found: ignore
