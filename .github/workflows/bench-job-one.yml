@@ -81,8 +81,8 @@ jobs:
         if: inputs.variant == 'quod'
         uses: pango07/quod-action@8e5cce6fa6a75dac724d24fd1fef47839edd6ee4 # exp/whole-job
         with:
-          version: bin-b4c77da
-          sha256: b73ef7b2628f8d062ba7e7eaf093a98aa94a2c5a319bd4ab026572d0e6c06160
+          version: bin-30e7c30
+          sha256: bb5cc000b2e6fb4e2456227ba31ca87d64abf3c8ea03ffa85b9023d11d48fd52
 
       - name: env
         env:

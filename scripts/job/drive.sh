@@ -70,7 +70,7 @@ chain() { # id variant
 }
 
 for id in "${IDS[@]}"; do
-  repo=$(meta "$id" repo); end=$(meta "$id" sha)
+  repo=$(meta "$id" repo); end=${BJ_END:-$(meta "$id" sha)}
   git clone -q --filter=blob:none --no-checkout "https://github.com/$repo" "$out/src/$id"
   git -C "$out/src/$id" rev-list --first-parent -n "$commits" "$end" | tac > "$out/src/$id.commits"
   echo "$id: $(wc -l < "$out/src/$id.commits") commits ending at ${end:0:9}"

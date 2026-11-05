@@ -22,8 +22,12 @@ on:
         description: Consecutive first-parent commits per project, ending at the corpus sha
         required: false
         default: '6'
+      end:
+        description: The window's last commit (default the corpus sha)
+        required: false
+        default: ''
       variants:
-        description: Comma-separated variants (plain, quod-shipped)
+        description: Comma-separated variants (plain, quod-shipped, quod)
         required: false
         default: plain,quod-shipped
   # Registers the workflow while it lives only on this branch; the job runs on dispatch only.
@@ -48,6 +52,7 @@ jobs:
           ONLY: ${{ inputs.only }}
           COMMITS: ${{ inputs.commits }}
           VARIANTS: ${{ inputs.variants }}
+          BJ_END: ${{ inputs.end }}
         run: bash scripts/job/drive.sh "$ONLY" "$COMMITS" "$VARIANTS"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
