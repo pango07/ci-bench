@@ -25,6 +25,19 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm ci
+      - name: quod unit as root (the gate's e2e)
+        env:
+          BIN: ${{ github.event.inputs.bin || 'bin-cb5d92d' }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$BIN" -R pango07/ci-bench -p 'quod-linux-x86_64.tar.gz' -D $RUNNER_TEMP/q0
+          tar -xzf $RUNNER_TEMP/q0/*.tar.gz -C $RUNNER_TEMP/q0; Q=$(find $RUNNER_TEMP/q0 -name quod -type f | head -1)
+          W=$PWD/e2e; mkdir -p $W/repo; echo one > $W/repo/in.txt; cd $W/repo
+          for who in "" "sudo env HOME=$HOME PATH=$PATH"; do
+            rm -rf $W/units$RANDOM; D=$W/units-$(echo "$who" | wc -c)
+            for i in 1 2 3; do $who $Q unit --dir $D --root $W/repo -- sh -c 'mkdir -p out && cat in.txt > out/o.txt && echo built'; echo "exit $?"; rm -rf out; done
+          done
+          sudo bwrap --dev-bind / / --tmpfs /tmp --proc /proc --unshare-net --unshare-pid --die-with-parent -- strace -f -o /dev/null true; echo "root bwrap+strace $?"
       - name: quod unit (record, witness, answer) on build and test:release
         env:
           BIN: ${{ github.event.inputs.bin || 'bin-3dcd587' }}
