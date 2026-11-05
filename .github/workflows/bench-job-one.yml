@@ -23,7 +23,7 @@ on:
         description: The project commit
         required: true
       variant:
-        description: plain | quod-shipped | quod | quod-ts | quod-ts<N>
+        description: plain | floor | quod-shipped | quod | quod-ts | quod-ts<N>
         required: true
       cfg:
         description: 'JSON: {pnpm, bun, corepack, corepack_first, node, node_file, bun_file, install, build, test, env}'
@@ -101,16 +101,20 @@ jobs:
         env:
           E: ${{ fromJSON(inputs.cfg).env }}
         run: for kv in $E; do echo "$kv" >> "$GITHUB_ENV"; done
+      # variant floor: the job with no work at all (checkout and set-up only),
+      # the floor a hit is reported against.
       - name: install
+        if: inputs.variant != 'floor'
         env:
           CMD: ${{ fromJSON(inputs.cfg).install }}
         run: bash -c "$CMD"
       - name: build
-        if: fromJSON(inputs.cfg).build != ''
+        if: fromJSON(inputs.cfg).build != '' && inputs.variant != 'floor'
         env:
           CMD: ${{ fromJSON(inputs.cfg).build }}
         run: bash -c "$CMD"
       - name: test
+        if: inputs.variant != 'floor'
         env:
           CMD: ${{ fromJSON(inputs.cfg).test }}
           WD: ${{ fromJSON(inputs.cfg).workdir || '.' }}

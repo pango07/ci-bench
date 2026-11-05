@@ -41,7 +41,7 @@ function hit(q) {
 // against plain's job of the same project and commit.
 const plainOf = new Map(rows.filter((r) => r.variant === 'plain').map((r) => [`${r.id} ${r.commit}`, r]))
 function wrong(r) {
-  if (r.variant === 'plain') return null
+  if (r.variant === 'plain' || r.variant === 'floor') return null
   const p = plainOf.get(`${r.id} ${r.commit}`)
   if (!p || !p.sig || !r.sig) return null
   const diff = []
