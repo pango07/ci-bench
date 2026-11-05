@@ -1,0 +1,55 @@
+# Can quod's observer (quod run) record and replay convex-helpers' npm
+# scripts on a hosted runner, unprivileged? Timings of record and replay.
+name: probe-unit
+on:
+  workflow_dispatch:
+    inputs:
+      bin:
+        required: true
+  push:
+    branches: ['probe/runner']
+    paths: ['.github/workflows/probe-unit.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: get-convex/convex-helpers
+          ref: 5eaa7e5160736054d53f8b71e2c522835eb427e0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci
+      - name: quod
+        env:
+          BIN: ${{ inputs.bin }}
+        run: |
+          mkdir -p /tmp/q && cd /tmp/q
+          curl -sSLf -o q.tgz "https://github.com/pango07/ci-bench/releases/download/$BIN/quod-linux-x86_64.tar.gz" && tar xzf q.tgz
+          ./quod --version; ./quod run --help | head -60
+      - name: plain test:release
+        run: time npm run test:release 2>&1 | tail -5
+      - name: record (1)
+        continue-on-error: true
+        run: |
+          export QUOD_STATE=/tmp/qs
+          time /tmp/q/quod run --host-root --toolchain node -- npm run test:release 2>&1 | tail -40
+      - name: again (2)
+        continue-on-error: true
+        run: |
+          export QUOD_STATE=/tmp/qs
+          time /tmp/q/quod run --host-root --toolchain node -- npm run test:release 2>&1 | tail -40
+      - name: again (3)
+        continue-on-error: true
+        run: |
+          export QUOD_STATE=/tmp/qs
+          time /tmp/q/quod run --host-root --toolchain node -- npm run test:release 2>&1 | tail -40
+      - name: sudo record (4)
+        continue-on-error: true
+        run: |
+          time sudo -E env "PATH=$PATH" QUOD_STATE=/tmp/qs2 /tmp/q/quod run --host-root --toolchain node -- npm run test:release 2>&1 | tail -40
