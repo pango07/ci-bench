@@ -106,9 +106,13 @@ cat "$out"/runs/*.jsonl 2>/dev/null | while read -r row; do
   jobs=$(gh api "repos/$R/actions/runs/$rid/jobs")
   run=$(gh api "repos/$R/actions/runs/$rid" --jq '{run_started_at, created_at, conclusion}')
   jid=$(jq -r '.jobs[0].id' <<<"$jobs")
+  : > "$out/log.txt" # a failed download must not reuse the previous job's evidence
   curl -fsSL --retry 4 --retry-all-errors --retry-delay 1 -o "$out/log.txt" -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
     "https://api.github.com/repos/$R/actions/jobs/$jid/logs" > "$out/log.status" 2>&1 || true
-  [ "$(cat "$out/log.status")" = 200 ] || echo "::warning::run $rid: job log HTTP $(cat "$out/log.status")"
+  if [ "$(cat "$out/log.status")" != 200 ]; then
+    : > "$out/log.txt"
+    echo "::warning::run $rid: job log download failed; evidence is empty and verification will fail"
+  fi
   # Quod's lines, its warnings included ("Quod is off for vitest in this job").
   quod=$(LC_ALL=C sed 's/^[0-9TZ:.-]* //; s/^##\[warning\]//' "$out/log.txt" | LC_ALL=C grep -aE '^(quod( vitest)?|Quod)[ :]' | LC_ALL=C grep -avE '(GITHUB|RUNNER|ACTIONS)_[A-Z_]* keyed for every' | jq -Rs .)
   # The runner image the job got (GitHub rolls images out gradually): "Set
