@@ -23,7 +23,7 @@ on:
         description: The project commit
         required: true
       variant:
-        description: plain | quod-shipped | quod | quod-m<NN>
+        description: plain | quod-shipped | quod | quod-ts | quod-ts<N>
         required: true
       cfg:
         description: 'JSON: {pnpm, bun, corepack, corepack_first, node, node_file, bun_file, install, build, test, env}'
@@ -78,22 +78,24 @@ jobs:
 
       # ---- the line under development: quod-action exp/whole-job ----
       # (cloud off: the ledger and node_modules go through the Actions cache,
-      # so the bench does not depend on Quod Cloud.) quod-m<NN>: the same,
-      # with the near-timeout margin at 0.<NN> of a test's timeout instead of
-      # 0.5 (an experiment for a policy decision; never a default).
-      - name: quod margin (experiment)
-        if: startsWith(inputs.variant, 'quod-m')
+      # so the bench does not depend on Quod Cloud.) Variants: quod (the
+      # defaults: near-timeout margin 0.5), quod-ts (timing-sensitive: replay),
+      # quod-ts<N> (timing-sensitive: replay, timing-audit: N).
+      - name: quod policy
+        id: pol
         env:
           V: ${{ inputs.variant }}
-        run: echo "QUOD_VITEST_NEAR_TIMEOUT=0.${V#quod-m}" >> "$GITHUB_ENV"
+        run: a=${V#quod-ts}; [[ "$V" == quod-ts* && "$a" =~ ^[0-9]+$ ]] || a=0; echo "audit=$a" >> "$GITHUB_OUTPUT"
       - name: quod
-        if: inputs.variant == 'quod' || startsWith(inputs.variant, 'quod-m')
-        uses: pango07/quod-action@5d143e70fb5a7abd3b5964d36e3ccb42b0a28651 # exp/whole-job
+        if: startsWith(inputs.variant, 'quod') && inputs.variant != 'quod-shipped'
+        uses: pango07/quod-action@ffc6b9828842b326692d197b72ec6f722a5a4e4c # exp/whole-job
         with:
-          version: bin-b13d8a0
-          sha256: 2d65cdbac2ec942668447b6aa2455cba4101ad80ae0f5fe3b5ac759e704b6a7c
+          version: bin-72066c7
+          sha256: 49a1291c38576edd4f944c1a434e286a6efc3b3291b6ad57140adc67039bec67
           cloud: 'false'
           task-cache: 'false'
+          timing-sensitive: ${{ startsWith(inputs.variant, 'quod-ts') && 'replay' || 'off' }}
+          timing-audit: ${{ steps.pol.outputs.audit }}
 
       - name: env
         env:
