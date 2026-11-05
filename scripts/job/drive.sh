@@ -40,17 +40,18 @@ wait_run() { # tag branch -> run id once it completes
     [ -n "$id" ] && break
   done
   [ -n "$id" ] || return 1
-  # 60 s polls: eight chains stay well inside GITHUB_TOKEN's 1000 requests an hour.
+  # 30 s polls: the four convex chains stay within the API budget.
   while :; do
     st=$(gh run view "$id" -R "$R" --json status --jq .status 2>/dev/null)
     [ "$st" = completed ] && break
-    sleep 60
+    sleep 30
   done
   echo "$id"
 }
 
 chain() { # id variant
   local id=$1 v=$2 repo sha c br i tag rid
+  local -a dispatched=()
   repo=$(meta "$id" repo); c=$(cfg "$id") || return 1
   mapfile -t cs < "$out/src/$id.commits"
   br=$GITHUB_REF_NAME
@@ -63,6 +64,17 @@ chain() { # id variant
     sha=${cs[$i]}; tag="$GITHUB_RUN_ID-$id-$v-$i"
     gh workflow run bench-job-one.yml -R "$R" --ref "$br" -f tag="$tag" -f repo="$repo" -f commit="$sha" -f variant="$v" -f cfg="$c" \
       || { echo "::warning::$tag: dispatch failed"; continue; }
+    if [ "$v" = plain ] || [ "$v" = floor ]; then
+      # No replay state flows between baseline jobs; dispatch all first.
+      dispatched+=("$i")
+      continue
+    fi
+    rid=$(wait_run "$tag" "$br") || { echo "::warning::$tag: no run appeared"; continue; }
+    echo "$id $v $i ${sha:0:9}: run $rid"
+    printf '{"id":"%s","variant":"%s","i":%d,"commit":"%s","run":%s}\n' "$id" "$v" "$i" "$sha" "$rid" >> "$out/runs/$id-$v.jsonl"
+  done
+  for i in "${dispatched[@]}"; do
+    sha=${cs[$i]}; tag="$GITHUB_RUN_ID-$id-$v-$i"
     rid=$(wait_run "$tag" "$br") || { echo "::warning::$tag: no run appeared"; continue; }
     echo "$id $v $i ${sha:0:9}: run $rid"
     printf '{"id":"%s","variant":"%s","i":%d,"commit":"%s","run":%s}\n' "$id" "$v" "$i" "$sha" "$rid" >> "$out/runs/$id-$v.jsonl"

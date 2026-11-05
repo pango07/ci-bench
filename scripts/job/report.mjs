@@ -37,7 +37,9 @@ function hit(q) {
   const ran = [...q.matchAll(/quod vitest: ran (\d+) files/g)].map((m) => +m[1])
   const all = (q.match(/quod vitest: every file replays/g) ?? []).length
   if (!ran.length && !all) return null
-  return ran.every((n) => n === 0) ? 'hit' : 'miss'
+  if (!ran.every((n) => n === 0)) return 'miss'
+  if (/quod: .* (runs:|runs plain|always runs|recorded \(first witness)|quod: .*second witness (agrees|disagrees)/.test(q)) return 'partial'
+  return 'hit'
 }
 
 // The wrong check: every job's test lines (drive.sh `sig`) and conclusion
@@ -70,7 +72,7 @@ const per = rows.map((r) => {
   return {
     id: r.id, variant: r.variant, i: r.i, commit: r.commit, run: r.run, conclusion: j.conclusion,
     wall: t(j.completed_at) - t(j.created_at), queue: t(j.started_at) - t(j.created_at), runner, ...g, work, fixed: runner - work,
-    boot_setup: g.boot + g.setup, hit: hit(r.quod), image: r.image ?? '', quod: r.quod, billed: Math.ceil(runner / 60), wrong: wrong(r), lines: (r.sig ?? '').split('\n').filter(Boolean).length,
+    boot_setup: g.boot + g.setup, lineage: [...(r.quod ?? '').matchAll(/lineage: (\d+) promoted, (\d+) plain audits, (\d+) disagreed, (\d+) revoked/g)].reduce((a, m) => ({promoted:a.promoted + +m[1],audits:a.audits + +m[2],disagreed:a.disagreed + +m[3],revoked:a.revoked + +m[4]}), {promoted:0,audits:0,disagreed:0,revoked:0}), hit: hit(r.quod), image: r.image ?? '', quod: r.quod, billed: Math.ceil(runner / 60), wrong: wrong(r), lines: (r.sig ?? '').split('\n').filter(Boolean).length,
   }
 })
 
@@ -121,7 +123,7 @@ for (const [k, ps] of Object.entries(groups)) {
   const prs = sum(pl.map((p) => p.runner))
   const pbm = sum(pl.map((p) => p.billed))
   const w = ps.filter((p) => p.wrong?.length).length
-  const u = ps.filter((p) => p.variant !== 'plain' && p.wrong === null).length
+  const u = ps.filter((p) => !['plain', 'floor'].includes(p.variant) && p.wrong === null).length
   out.push(`| ${id} | ${ps[0].variant} | ${ps.length} | ${f(median(ps.map((p) => p.wall)))} | ${f(rs)} | ${prs ? (rs / prs).toFixed(2) : '-'} | ${bm} | ${pbm ? (bm / pbm).toFixed(2) : '-'} | ${ps[0].variant === 'plain' ? '' : w} | ${ps[0].variant === 'plain' ? '' : u} |`)
 }
 const wrongs = per.filter((p) => p.wrong?.length)
@@ -129,6 +131,19 @@ if (wrongs.length) {
   out.push('')
   out.push('**Wrong** (test lines or conclusion differ from plain at the same commit):')
   for (const p of wrongs) out.push(`- ${p.id} ${p.variant} #${p.i} ${p.commit.slice(0, 9)}: ${p.wrong.slice(0, 6).join('; ')}`)
+}
+out.push('')
+out.push('| variant | c1–c11 runner-s | x plain | billed min | x plain | best hit above floor | median hit above floor | lineage audits | disagreed |')
+out.push('|---|---:|---:|---:|---:|---:|---:|---:|---:|')
+for (const v of variants.filter(v => !['plain', 'floor'].includes(v))) {
+  const ps = per.filter(p => p.variant === v)
+  const warm = ps.filter(p => p.i > 0)
+  const pl = per.filter(p => p.variant === 'plain' && p.i > 0)
+  const hitGaps = ps.filter(p => p.hit === 'hit').flatMap(p => {
+    const floor = per.find(x => x.variant === 'floor' && x.id === p.id && x.commit === p.commit)
+    return floor ? [p.runner - floor.runner] : []
+  })
+  out.push(`| ${v} | ${sum(warm.map(p=>p.runner))} | ${(sum(warm.map(p=>p.runner))/sum(pl.map(p=>p.runner))).toFixed(2)} | ${sum(warm.map(p=>p.billed))} | ${(sum(warm.map(p=>p.billed))/sum(pl.map(p=>p.billed))).toFixed(2)} | ${hitGaps.length ? 'floor + ' + f(Math.min(...hitGaps)) + ' s' : 'no full hits'} | ${hitGaps.length ? 'floor + ' + f(median(hitGaps)) + ' s' : 'no full hits'} | ${sum(ps.map(p=>p.lineage.audits))} | ${sum(ps.map(p=>p.lineage.disagreed))} |`)
 }
 out.push('')
 out.push('<details><summary>per job</summary>\n')
@@ -143,6 +158,7 @@ console.log(out.join('\n'))
 // A green benchmark must contain evidence for every expected comparison.
 // Older downloaded evidence can still be rendered, but missing signatures
 // and wrong results always make the report command fail.
+const lineageFailures = per.filter(p => p.lineage.disagreed > 0)
 const unchecked = per.filter((p) => !['plain', 'floor'].includes(p.variant) && p.wrong === null)
 const expectedFile = outDir && path.join(outDir, 'expected.jsonl')
 const expected = expectedFile && fs.existsSync(expectedFile)
@@ -150,7 +166,7 @@ const expected = expectedFile && fs.existsSync(expectedFile)
 const key = (r) => JSON.stringify([r.id, r.variant, r.i, r.commit])
 const actual = new Set(per.map(key))
 const missing = expected.filter((r) => !actual.has(key(r)))
-if (wrongs.length || unchecked.length || missing.length) {
-  console.error(`Benchmark verification failed: ${wrongs.length} wrong, ${unchecked.length} unchecked, ${missing.length} missing jobs`)
+if (wrongs.length || unchecked.length || missing.length || lineageFailures.length) {
+  console.error(`Benchmark verification failed: ${wrongs.length} wrong, ${unchecked.length} unchecked, ${missing.length} missing jobs, ${lineageFailures.length} lineage disagreements`)
   process.exitCode = 1
 }

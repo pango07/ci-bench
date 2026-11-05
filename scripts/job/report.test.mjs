@@ -15,7 +15,9 @@ function report(rows, expected) {
     const input = path.join(dir, 'jobs.jsonl')
     fs.writeFileSync(input, rows.map(JSON.stringify).join('\n'))
     if (expected) fs.writeFileSync(path.join(dir, 'expected.jsonl'), expected.map(JSON.stringify).join('\n'))
-    return spawnSync(process.execPath, [new URL('./report.mjs', import.meta.url).pathname, input, dir], { encoding: 'utf8' })
+    const result = spawnSync(process.execPath, [new URL('./report.mjs', import.meta.url).pathname, input, dir], { encoding: 'utf8' })
+    result.metrics = JSON.parse(fs.readFileSync(path.join(dir, 'job-metrics.json')))
+    return result
   } finally { fs.rmSync(dir, { recursive: true, force: true }) }
 }
 test('complete agreeing comparisons pass', () => assert.equal(report([row('plain'), row('quod')]).status, 0))
@@ -37,4 +39,17 @@ test('an omitted dispatched job fails verification', () => {
 test('job conclusion differences fail verification', () => {
   const q = row('quod'); q.job.conclusion = 'failure'
   assert.equal(report([row('plain'), q]).status, 1)
+})
+
+test('a unit witness makes a vitest replay only a partial hit', () => {
+  const q = row('quod')
+  q.quod = 'quod vitest: every file replays\nquod: `npm run build` recorded (first witness: 20 inputs)'
+  assert.equal(report([row('plain'), q]).metrics.per.find(p=>p.variant==='quod').hit, 'partial')
+})
+test('lineage disagreements fail even when aggregate test lines happen to match', () => {
+  const q = row('quod')
+  q.quod = 'quod vitest: lineage: 0 promoted, 3 plain audits, 1 disagreed, 17 revoked'
+  const r = report([row('plain'), q])
+  assert.equal(r.status, 1)
+  assert.equal(r.metrics.per.find(p=>p.variant==='quod').lineage.revoked, 17)
 })

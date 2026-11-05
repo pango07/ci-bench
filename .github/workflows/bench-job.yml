@@ -59,6 +59,7 @@ jobs:
         with:
           name: bench-job
           path: |
+            ${{ runner.temp }}/bj/expected.jsonl
             ${{ runner.temp }}/bj/jobs.jsonl
             ${{ runner.temp }}/bj/job-metrics.json
             ${{ runner.temp }}/bj/report.md
