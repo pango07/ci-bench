@@ -28,9 +28,12 @@ function group(name) {
   return 'setup'
 }
 
-// A hit: Quod replayed every test file of every vitest invocation of the job.
+// A hit: Quod replayed every test file of every vitest invocation of the
+// job. off: the action turned Quod off for vitest (the job ran plain; a
+// failed install, for one), whatever else the log says.
 function hit(q) {
   if (!q) return null
+  if (/Quod is off for vitest|Quod is off for this job|Quod was off for vitest/.test(q)) return 'off'
   const ran = [...q.matchAll(/quod vitest: ran (\d+) files/g)].map((m) => +m[1])
   const all = (q.match(/quod vitest: every file replays/g) ?? []).length
   if (!ran.length && !all) return null
@@ -61,7 +64,7 @@ const per = rows.map((r) => {
   return {
     id: r.id, variant: r.variant, i: r.i, commit: r.commit, run: r.run, conclusion: j.conclusion,
     wall: t(j.completed_at) - t(j.created_at), queue: t(j.started_at) - t(j.created_at), runner, ...g, work, fixed: runner - work,
-    boot_setup: g.boot + g.setup, hit: hit(r.quod), quod: r.quod, billed: Math.ceil(runner / 60), wrong: wrong(r), lines: (r.sig ?? '').split('\n').filter(Boolean).length,
+    boot_setup: g.boot + g.setup, hit: hit(r.quod), image: r.image ?? '', quod: r.quod, billed: Math.ceil(runner / 60), wrong: wrong(r), lines: (r.sig ?? '').split('\n').filter(Boolean).length,
   }
 })
 
@@ -123,10 +126,10 @@ if (wrongs.length) {
 }
 out.push('')
 out.push('<details><summary>per job</summary>\n')
-out.push('| project | variant | # | commit | run | result | Quod | wrong | wall | queue | runner | billed | boot | setup | action | install | build | test | post | fixed |')
-out.push('|---|---|---:|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|')
+out.push('| project | variant | # | commit | run | image | result | Quod | wrong | wall | queue | runner | billed | boot | setup | action | install | build | test | post | fixed |')
+out.push('|---|---|---:|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|')
 for (const p of per.sort((a, b) => a.id.localeCompare(b.id) || a.variant.localeCompare(b.variant) || a.i - b.i))
-  out.push(`| ${p.id} | ${p.variant} | ${p.i} | ${p.commit.slice(0, 9)} | [${p.run}](https://github.com/${process.env.GITHUB_REPOSITORY ?? 'pango07/ci-bench'}/actions/runs/${p.run}) | ${p.conclusion} | ${p.hit ?? ''} | ${p.variant === 'plain' ? `${p.lines} lines` : p.wrong === null ? '?' : p.wrong.length ? 'WRONG' : '0'} | ${f(p.wall)} | ${f(p.queue)} | ${f(p.runner)} | ${p.billed} | ${f(p.boot)} | ${f(p.setup)} | ${f(p.action)} | ${f(p.install)} | ${f(p.build)} | ${f(p.test)} | ${f(p.post)} | ${f(p.fixed)} |`)
+  out.push(`| ${p.id} | ${p.variant} | ${p.i} | ${p.commit.slice(0, 9)} | [${p.run}](https://github.com/${process.env.GITHUB_REPOSITORY ?? 'pango07/ci-bench'}/actions/runs/${p.run}) | ${p.image} | ${p.conclusion} | ${p.hit ?? ''} | ${p.variant === 'plain' ? `${p.lines} lines` : p.wrong === null ? '?' : p.wrong.length ? 'WRONG' : '0'} | ${f(p.wall)} | ${f(p.queue)} | ${f(p.runner)} | ${p.billed} | ${f(p.boot)} | ${f(p.setup)} | ${f(p.action)} | ${f(p.install)} | ${f(p.build)} | ${f(p.test)} | ${f(p.post)} | ${f(p.fixed)} |`)
 out.push('\n</details>\n')
 if (outDir) fs.writeFileSync(path.join(outDir, 'job-metrics.json'), JSON.stringify({ overall, summary, per }, null, 1))
 console.log(out.join('\n'))
