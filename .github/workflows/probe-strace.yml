@@ -3,6 +3,10 @@
 name: probe-strace
 on:
   workflow_dispatch:
+    inputs:
+      bin:
+        required: false
+        default: ''
   push:
     branches: ['probe/runner']
     paths: ['.github/workflows/probe-strace.yml']
@@ -21,18 +25,19 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm ci
-      - name: lost parent (quod unit on build)
+      - name: quod unit (record, witness, answer) on build and test:release
+        env:
+          BIN: ${{ github.event.inputs.bin || 'bin-3dcd587' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          B="bwrap --dev-bind / / --tmpfs /tmp --proc /proc --unshare-net --unshare-pid --die-with-parent"
-          T='trace=%file,%process,getdents64,getdents,%network,io_uring_setup,io_uring_enter,io_uring_register'
-          $B -- strace -f --seccomp-bpf -qq -yy -s 4096 -e $T -e inject=io_uring_setup:error=ENOSYS -o $RUNNER_TEMP/b.log npm run build > /dev/null 2>&1
-          f=$RUNNER_TEMP/b.log
-          head -3 $f | cut -c1-200
-          awk '{print $1}' $f | awk '!s[$0]++' | head -30 | tr '\n' ' '; echo
-          for p in $(awk '{print $1}' $f | awk '!s[$0]++' | head -30); do
-            echo "== $p first: $(grep -m1 "^$p " $f | cut -c1-160)"
-            grep -nE "(clone|clone3|fork|vfork).*= $p\b|resumed.*= $p$" $f | head -2 | cut -c1-220
-          done
+          gh release download "$BIN" -R pango07/ci-bench -p 'quod-linux-x86_64.tar.gz' -D $RUNNER_TEMP/q
+          tar -xzf $RUNNER_TEMP/q/*.tar.gz -C $RUNNER_TEMP/q; Q=$(find $RUNNER_TEMP/q -name quod -type f | head -1)
+          D=$RUNNER_TEMP/units; R=$PWD
+          NPM=$(dirname $(readlink -f $(which npm)))/npm-cli.js
+          u() { /usr/bin/time -o /tmp/t -f %e $Q unit --dir $D --root $R -- $(which node) $NPM run "$@" > /tmp/o 2> /tmp/e; c=$?; echo "== $* exit $c $(cat /tmp/t) s"; grep '^quod' /tmp/e; tail -3 /tmp/o; }
+          for i in 1 2 3; do rm -rf dist; u build; u test:release; done
+          ls dist | head -3
+          for f in $D/*/ledger.json; do node -e 'const l=require(process.argv[1]);const r=l.records[0];if(r){const k=r.keys.map(x=>x[0].split(":")[0]);const c={};for(const x of k)c[x]=(c[x]||0)+1;console.log(l.argv.slice(-1)[0],JSON.stringify(c),r.outputs.length,"outs")}else console.log(l.argv.slice(-1)[0],l.always)' $f; done
       - name: plain
         run: |
           t() { /usr/bin/time -o /tmp/t -f "%e" "$@" > /dev/null 2>&1; echo "$(cat /tmp/t)"; }
