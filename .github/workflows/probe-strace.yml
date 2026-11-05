@@ -1,0 +1,39 @@
+# What a syscall recorder (strace) costs on convex-helpers' npm scripts,
+# and how many distinct inputs they read.
+name: probe-strace
+on:
+  workflow_dispatch:
+  push:
+    branches: ['probe/runner']
+    paths: ['.github/workflows/probe-strace.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: get-convex/convex-helpers
+          ref: 5eaa7e5160736054d53f8b71e2c522835eb427e0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - run: npm ci
+      - name: plain
+        run: |
+          /usr/bin/time -f "plain test:release %e s" npm run test:release > /dev/null 2>&1
+          /usr/bin/time -f "plain build %e s" npm run build > /dev/null 2>&1
+          /usr/bin/time -f "plain test:release %e s" npm run test:release > /dev/null 2>&1
+      - name: strace
+        run: |
+          T='trace=%file,%process,getdents64,connect,io_uring_setup'
+          /usr/bin/time -f "strace test:release %e s" strace -f -qq -y -e $T -o /tmp/tr.log npm run test:release > /dev/null 2>&1
+          /usr/bin/time -f "strace build %e s" strace -f -qq -y -e $T -o /tmp/bu.log npm run build > /dev/null 2>&1
+          for f in /tmp/tr.log /tmp/bu.log; do
+            echo "$f: $(wc -l < $f) lines, $(grep -c 'execve(' $f) execs, $(grep -c io_uring_setup $f) io_uring, $(grep -c 'connect(' $f) connects"
+            grep -oE '"(/[^"]*)"' $f | sort -u | wc -l | xargs echo "distinct absolute paths:"
+            grep -oE 'execve\("[^"]*"' $f | sort | uniq -c | sort -rn | head -8
+          done
+          grep 'connect(' /tmp/tr.log | head -5
