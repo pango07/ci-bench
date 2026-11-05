@@ -25,7 +25,8 @@ cfg() { # the corpus entry's set-up flags and commands, as bench-job-one's `cfg`
     if (!e) { console.error("no corpus entry " + process.argv[2]); process.exit(1) }
     // TURBO_FORCE is the in-place bench'"'"'s (one checkout, many runs); a fresh job has no local turbo cache.
     let env = (e.env ?? "").split(/\s+/).filter((kv) => kv && !kv.startsWith("TURBO_FORCE=")).join(" ")
-    if (process.argv[3] === "quod-proof" || process.argv[3] === "quod-ts-proof") env += " QUOD_VITEST_NAMES_PROOF=1"
+    if (["quod-proof", "quod-ts-proof", "quod-query"].includes(process.argv[3])) env += " QUOD_VITEST_NAMES_PROOF=1"
+    if (process.argv[3] === "quod-query") env += " QUOD_VITEST_BOOLEAN_PROOF=1"
     if (process.argv[3] === "quod-ts-control") env += " QUOD_VITEST_NAMES_PROOF=0"
     const c = { pnpm: !!e.pnpm, bun: !!e.bun, corepack: !!e.corepack, corepack_first: !!e.corepack_first, node: e.node ?? "", node_file: e.node_file ?? "", bun_file: e.bun_file ?? "",
       install: e.install, build: e.build ?? "", test: e.test, workdir: e.workdir ?? ".", env }
@@ -112,7 +113,10 @@ wait
 : > "$out/jobs.jsonl"
 cat "$out"/runs/*.jsonl 2>/dev/null | while read -r row; do
   rid=$(jq -r .run <<<"$row")
-  jobs=$(gh api "repos/$R/actions/runs/$rid/jobs")
+  jobs=$(gh api "repos/$R/actions/runs/$rid/jobs" | node "$here/select-job.cjs") || {
+    echo "::error::run $rid did not have exactly one completed, non-skipped job; verification will fail"
+    continue
+  }
   run=$(gh api "repos/$R/actions/runs/$rid" --jq '{run_started_at, created_at, conclusion}')
   jid=$(jq -r '.jobs[0].id' <<<"$jobs")
   : > "$out/log.txt" # a failed download must not reuse the previous job's evidence
