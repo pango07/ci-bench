@@ -53,3 +53,13 @@ test('lineage disagreements fail even when aggregate test lines happen to match'
   assert.equal(r.status, 1)
   assert.equal(r.metrics.per.find(p=>p.variant==='quod').lineage.revoked, 17)
 })
+
+test('per-test evidence is mandatory when the job opted in', () => {
+  const p=row('plain'), q=row('quod'); p.evidence=q.evidence=true
+  p.semantic='abc'
+  assert.equal(report([p,q]).status,1)
+  q.semantic='abc'
+  assert.equal(report([p,q]).status,0)
+  q.semantic='different'
+  assert.equal(report([p,q]).status,1)
+})

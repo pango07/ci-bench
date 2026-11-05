@@ -49,7 +49,9 @@ function wrong(r) {
   if (r.variant === 'plain' || r.variant === 'floor') return null
   const p = plainOf.get(`${r.id} ${r.commit}`)
   if (!p || !p.sig || !r.sig) return null
+  if ((r.evidence || p.evidence) && (!p.semantic || !r.semantic)) return null
   const diff = []
+  if (p.semantic && r.semantic && p.semantic !== r.semantic) diff.push('per-test names/states differ')
   if (p.job.conclusion !== r.job.conclusion) diff.push(`conclusion ${p.job.conclusion} vs ${r.job.conclusion}`)
   // Preserve multiplicity: two projects can print the same test line.
   const counts = (sig) => {

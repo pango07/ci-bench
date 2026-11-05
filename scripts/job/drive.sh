@@ -71,13 +71,13 @@ chain() { # id variant
     fi
     rid=$(wait_run "$tag" "$br") || { echo "::warning::$tag: no run appeared"; continue; }
     echo "$id $v $i ${sha:0:9}: run $rid"
-    printf '{"id":"%s","variant":"%s","i":%d,"commit":"%s","run":%s}\n' "$id" "$v" "$i" "$sha" "$rid" >> "$out/runs/$id-$v.jsonl"
+    printf '{"id":"%s","variant":"%s","i":%d,"commit":"%s","run":%s,"evidence":true}\n' "$id" "$v" "$i" "$sha" "$rid" >> "$out/runs/$id-$v.jsonl"
   done
   for i in "${dispatched[@]}"; do
     sha=${cs[$i]}; tag="$GITHUB_RUN_ID-$id-$v-$i"
     rid=$(wait_run "$tag" "$br") || { echo "::warning::$tag: no run appeared"; continue; }
     echo "$id $v $i ${sha:0:9}: run $rid"
-    printf '{"id":"%s","variant":"%s","i":%d,"commit":"%s","run":%s}\n' "$id" "$v" "$i" "$sha" "$rid" >> "$out/runs/$id-$v.jsonl"
+    printf '{"id":"%s","variant":"%s","i":%d,"commit":"%s","run":%s,"evidence":true}\n' "$id" "$v" "$i" "$sha" "$rid" >> "$out/runs/$id-$v.jsonl"
   done
 }
 
@@ -121,7 +121,8 @@ cat "$out"/runs/*.jsonl 2>/dev/null | while read -r row; do
   sig=$(LC_ALL=C sed 's/^[0-9TZ:.-]* //' "$out/log.txt" | perl -pe 's/\e\[[0-9;]*m//g; s/\^\[\[[0-9;]*m//g' \
     | grep -aE '^ (✓|×|↓) |^ +× |Test Files |^ +Tests  |^(# |ℹ )(tests|pass|fail|cancelled|skipped|todo) [0-9]+' \
     | sed -E 's/ [0-9.]+m?s *$//' | LC_ALL=C sort | jq -Rs .)
-  jq -c --argjson jobs "$jobs" --argjson run "$run" --argjson quod "${quod:-\"\"}" --argjson sig "${sig:-\"\"}" --argjson image "${image:-\"\"}" '. + {image: $image, run_meta: $run, job: ($jobs.jobs[0] | {id, created_at, started_at, completed_at, conclusion, steps: [.steps[] | {name, conclusion, started_at, completed_at}]}), quod: $quod, sig: $sig}' <<<"$row" >> "$out/jobs.jsonl"
+  semantic=$(LC_ALL=C sed 's/^[0-9TZ:.-]* //' "$out/log.txt" | awk '/^QUOD_BENCH_STATES /{print $2}' | tail -1 | jq -Rs 'rtrimstr("\n")')
+  jq -c --argjson semantic "${semantic:-\"\"}" --argjson jobs "$jobs" --argjson run "$run" --argjson quod "${quod:-\"\"}" --argjson sig "${sig:-\"\"}" --argjson image "${image:-\"\"}" '. + {semantic: $semantic, image: $image, run_meta: $run, job: ($jobs.jobs[0] | {id, created_at, started_at, completed_at, conclusion, steps: [.steps[] | {name, conclusion, started_at, completed_at}]}), quod: $quod, sig: $sig}' <<<"$row" >> "$out/jobs.jsonl"
 done
 [ -f "$out/branches" ] && while read -r br; do gh api -X DELETE "repos/$R/git/refs/heads/$br" >/dev/null || true; done < "$out/branches"
 report_status=0

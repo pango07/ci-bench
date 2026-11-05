@@ -67,6 +67,17 @@ jobs:
         if: fromJSON(inputs.cfg).corepack
         run: corepack enable
 
+      - name: capture per-test evidence
+        if: inputs.variant != 'floor'
+        run: |
+          cat > "$RUNNER_TEMP/bench-vitest-report.cjs" <<'JS'
+          const entry = process.argv[1] || ''
+          if (/(?:^|[\/])vitest(?:\.m?js)?$/.test(entry) && process.argv.includes('run')) {
+            process.argv.push('--reporter=default', '--reporter=json', '--outputFile.json=' + process.env.BENCH_VITEST_REPORT)
+          }
+          JS
+          echo "BENCH_VITEST_REPORT=$RUNNER_TEMP/bench-vitest-report.json" >> "$GITHUB_ENV"
+
       # ---- the one line a customer adds: the action as shipped on exp/supported-v1, at its defaults
       # (dependencies, task-cache and cloud on), with the quod the 14-repo bench ran ----
       - name: quod
@@ -88,12 +99,13 @@ jobs:
         run: a=${V#quod-ts}; [[ "$V" == quod-ts* && "$a" =~ ^[0-9]+$ ]] || a=0; echo "audit=$a" >> "$GITHUB_OUTPUT"
       - name: quod
         if: startsWith(inputs.variant, 'quod') && inputs.variant != 'quod-shipped'
-        uses: pango07/quod-action@27d36d31bca0cab613d0d29ab295c686f65d52f2 # exp/whole-job (quod shipped in dist/)
+        uses: pango07/quod-action@98ebac2bb98158c0026bcc591645e9dec48062de # gated Addendum E, binary shipped in dist/
         with:
-          version: bin-c0f55ad
-          sha256: 184442ceecb624e9c20300af2759fc4e178707e8a76de4ec9e969b9362118569
+          version: bin-a026fea
+          sha256: f6594052a8ce0d61f915d019ba057be975475eba855a5c11fe5f664a72761fd8
           cloud: 'false'
           task-cache: 'false'
+          lineage-witness: 'true'
           timing-sensitive: ${{ startsWith(inputs.variant, 'quod-ts') && 'replay' || 'off' }}
           timing-audit: ${{ steps.pol.outputs.audit }}
 
@@ -118,4 +130,32 @@ jobs:
         env:
           CMD: ${{ fromJSON(inputs.cfg).test }}
           WD: ${{ fromJSON(inputs.cfg).workdir || '.' }}
+          NODE_OPTIONS: --require=${{ runner.temp }}/bench-vitest-report.cjs
         run: cd "$WD" && bash -c "$CMD"
+      - name: compare evidence
+        if: always() && inputs.variant != 'floor'
+        run: |
+          cat > "$RUNNER_TEMP/bench-evidence.cjs" <<'JS'
+          'use strict'
+          const fs = require('node:fs')
+          const crypto = require('node:crypto')
+          const path = require('node:path')
+          function states(report, root) {
+            if (!Array.isArray(report.testResults) || !report.testResults.length) throw Error('missing Vitest test results')
+            const rows = report.testResults.map(file => {
+              if (typeof file.name !== 'string' || !Array.isArray(file.assertionResults)) throw Error('incomplete Vitest file evidence')
+              const tests = file.assertionResults.map(a => {
+                if (typeof a.fullName !== 'string' || typeof a.status !== 'string') throw Error('incomplete test evidence')
+                return [a.fullName, a.status]
+              }).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+              return [path.relative(root, file.name), file.status, tests]
+            }).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+            return { hash: crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex'), files: rows.length, tests: rows.reduce((n,r)=>n+r[2].length,0) }
+          }
+          if (require.main === module) {
+            const result = states(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')), process.argv[3])
+            console.log(`QUOD_BENCH_STATES ${result.hash} ${result.files} ${result.tests}`)
+          }
+          module.exports = { states }
+          JS
+          node "$RUNNER_TEMP/bench-evidence.cjs" "$BENCH_VITEST_REPORT" "$GITHUB_WORKSPACE"
