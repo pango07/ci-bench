@@ -1,0 +1,27 @@
+# What the hosted runner allows a drop-in action without root: user
+# namespaces, bubblewrap, FUSE, strace. Light; dispatch by hand.
+name: probe-runner
+on:
+  workflow_dispatch:
+  push:
+    branches: ['probe/runner']
+    paths: ['.github/workflows/probe-runner.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          set +e
+          id; uname -a; cat /etc/os-release | head -3
+          sysctl kernel.apparmor_restrict_unprivileged_userns kernel.unprivileged_userns_clone user.max_user_namespaces 2>&1
+          for b in bwrap unshare fusermount3 fusermount strace bpftrace; do printf '%s: ' $b; command -v $b || echo none; done
+          ls -la /dev/fuse /usr/bin/fusermount3 2>&1
+          echo '--- unshare -rn'; unshare -rn sh -c 'id; ip link 2>/dev/null | head -2; getent hosts example.com || echo nodns'; echo "rc=$?"
+          echo '--- unshare -n (no -r)'; unshare -n true; echo "rc=$?"
+          echo '--- bwrap'; bwrap --ro-bind / / --dev /dev --proc /proc --unshare-net true; echo "rc=$?"
+          echo '--- sudo bwrap'; sudo bwrap --ro-bind / / --dev /dev --proc /proc --unshare-net true; echo "rc=$?"
+          echo '--- sudo unshare -n then back to runner'; sudo unshare -n sudo -u runner -E sh -c 'id; curl -s -m 3 https://example.com >/dev/null; echo curl=$?'; echo "rc=$?"
+          echo '--- apt bwrap?'; apt-cache policy bubblewrap 2>/dev/null | head -3
+          nproc; free -g | head -2
