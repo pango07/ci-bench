@@ -1,0 +1,37 @@
+# Diagnostic: what of a job's environment differs between two real jobs with
+# the same set-up (PATH, the image, vitest's home files), as Quod's ledger
+# sees them. Dispatch twice and diff the two logs' "path:" lines.
+name: bench-path
+on:
+  workflow_dispatch:
+  push:
+    branches: ['bench/whole-job']
+    paths: ['.github/workflows/bench-path.yml']
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  env:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: pmndrs/zustand
+          ref: 382d29c485e67018c06e75ec7235130d0968522c
+          persist-credentials: false
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: pango07/quod-action@76297ed9712e1e76381211b6d6f92c7b699e3aab
+        with:
+          version: bin-32b630c
+          sha256: e8b13b01329218d941177d61f381eb7341f152cdf65931b5ff06f121a06a3c3d
+          cloud: 'false'
+      - run: |
+          echo "image: $ImageOS $ImageVersion runner: $RUNNER_NAME"
+          echo "$PATH" | tr ':' '\n' | sed 's/^/path: /'
+          node -p 'process.execPath + " " + process.version'
+          ls -la ~/.local/share/vitest 2>&1 | sed 's/^/vitesthome: /'
+          env | cut -d= -f1 | sort | tr '\n' ' '
