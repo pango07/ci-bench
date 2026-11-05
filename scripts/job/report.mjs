@@ -49,10 +49,16 @@ function wrong(r) {
   if (!p || !p.sig || !r.sig) return null
   const diff = []
   if (p.job.conclusion !== r.job.conclusion) diff.push(`conclusion ${p.job.conclusion} vs ${r.job.conclusion}`)
-  const a = new Set(p.sig.split('\n').filter(Boolean))
-  const b = new Set(r.sig.split('\n').filter(Boolean))
-  for (const l of a) if (!b.has(l)) diff.push(`plain only: ${l.trim()}`)
-  for (const l of b) if (!a.has(l)) diff.push(`${r.variant} only: ${l.trim()}`)
+  // Preserve multiplicity: two projects can print the same test line.
+  const counts = (sig) => {
+    const out = new Map()
+    for (const line of sig.split('\n').filter(Boolean)) out.set(line, (out.get(line) ?? 0) + 1)
+    return out
+  }
+  const a = counts(p.sig), b = counts(r.sig)
+  for (const line of new Set([...a.keys(), ...b.keys()])) {
+    if ((a.get(line) ?? 0) !== (b.get(line) ?? 0)) diff.push(`count ${a.get(line) ?? 0} plain vs ${b.get(line) ?? 0} ${r.variant}: ${line.trim()}`)
+  }
   return diff
 }
 const per = rows.map((r) => {
@@ -133,3 +139,18 @@ for (const p of per.sort((a, b) => a.id.localeCompare(b.id) || a.variant.localeC
 out.push('\n</details>\n')
 if (outDir) fs.writeFileSync(path.join(outDir, 'job-metrics.json'), JSON.stringify({ overall, summary, per }, null, 1))
 console.log(out.join('\n'))
+
+// A green benchmark must contain evidence for every expected comparison.
+// Older downloaded evidence can still be rendered, but missing signatures
+// and wrong results always make the report command fail.
+const unchecked = per.filter((p) => !['plain', 'floor'].includes(p.variant) && p.wrong === null)
+const expectedFile = outDir && path.join(outDir, 'expected.jsonl')
+const expected = expectedFile && fs.existsSync(expectedFile)
+  ? fs.readFileSync(expectedFile, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : []
+const key = (r) => JSON.stringify([r.id, r.variant, r.i, r.commit])
+const actual = new Set(per.map(key))
+const missing = expected.filter((r) => !actual.has(key(r)))
+if (wrongs.length || unchecked.length || missing.length) {
+  console.error(`Benchmark verification failed: ${wrongs.length} wrong, ${unchecked.length} unchecked, ${missing.length} missing jobs`)
+  process.exitCode = 1
+}

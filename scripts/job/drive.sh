@@ -69,11 +69,19 @@ chain() { # id variant
   done
 }
 
+: > "$out/expected.jsonl"
 for id in "${IDS[@]}"; do
   repo=$(meta "$id" repo); end=${BJ_END:-$(meta "$id" sha)}
   git clone -q --filter=blob:none --no-checkout "https://github.com/$repo" "$out/src/$id"
   git -C "$out/src/$id" rev-list --first-parent -n "$commits" "$end" | tac > "$out/src/$id.commits"
   echo "$id: $(wc -l < "$out/src/$id.commits") commits ending at ${end:0:9}"
+  i=0
+  while read -r sha; do
+    for v in "${VARS[@]}"; do
+      jq -cn --arg id "$id" --arg v "$v" --argjson i "$i" --arg sha "$sha" '{id:$id,variant:$v,i:$i,commit:$sha}' >> "$out/expected.jsonl"
+    done
+    i=$((i + 1))
+  done < "$out/src/$id.commits"
   rm -rf "$out/src/$id"
 done
 for id in "${IDS[@]}"; do for v in "${VARS[@]}"; do chain "$id" "$v" & done; done
@@ -90,7 +98,7 @@ cat "$out"/runs/*.jsonl 2>/dev/null | while read -r row; do
     "https://api.github.com/repos/$R/actions/jobs/$jid/logs" > "$out/log.status" 2>&1 || true
   [ "$(cat "$out/log.status")" = 200 ] || echo "::warning::run $rid: job log HTTP $(cat "$out/log.status")"
   # Quod's lines, its warnings included ("Quod is off for vitest in this job").
-  quod=$(LC_ALL=C sed 's/^[0-9TZ:.-]* //; s/^##\[warning\]//' "$out/log.txt" | LC_ALL=C grep -aE '^(quod( vitest)?|Quod)[ :]' | LC_ALL=C grep -avE '(GITHUB|RUNNER|ACTIONS)_[A-Z_]* keyed for every' | head -60 | jq -Rs .)
+  quod=$(LC_ALL=C sed 's/^[0-9TZ:.-]* //; s/^##\[warning\]//' "$out/log.txt" | LC_ALL=C grep -aE '^(quod( vitest)?|Quod)[ :]' | LC_ALL=C grep -avE '(GITHUB|RUNNER|ACTIONS)_[A-Z_]* keyed for every' | jq -Rs .)
   # The runner image the job got (GitHub rolls images out gradually): "Set
   # up job" prints `Image: ubuntu-26.04` then `Version: 20261025.179.1`.
   image=$(LC_ALL=C sed 's/^[0-9TZ:.-]* //' "$out/log.txt" | LC_ALL=C awk '/^Image: /{i=$2; getline; if ($1=="Version:") {print i "/" $2; exit}}' | jq -Rs 'rtrimstr("\n")')
@@ -104,6 +112,7 @@ cat "$out"/runs/*.jsonl 2>/dev/null | while read -r row; do
   jq -c --argjson jobs "$jobs" --argjson run "$run" --argjson quod "${quod:-\"\"}" --argjson sig "${sig:-\"\"}" --argjson image "${image:-\"\"}" '. + {image: $image, run_meta: $run, job: ($jobs.jobs[0] | {id, created_at, started_at, completed_at, conclusion, steps: [.steps[] | {name, conclusion, started_at, completed_at}]}), quod: $quod, sig: $sig}' <<<"$row" >> "$out/jobs.jsonl"
 done
 [ -f "$out/branches" ] && while read -r br; do gh api -X DELETE "repos/$R/git/refs/heads/$br" >/dev/null || true; done < "$out/branches"
-node "$here/report.mjs" "$out/jobs.jsonl" "$out" | tee "$out/report.md"
+report_status=0
+node "$here/report.mjs" "$out/jobs.jsonl" "$out" | tee "$out/report.md" || report_status=$?
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$out/report.md" >> "$GITHUB_STEP_SUMMARY"
-exit 0
+exit "$report_status"
