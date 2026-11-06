@@ -51,5 +51,35 @@
       "earlierRecordingFound": false
     },
     "overview": "Step-only Overview incorrectly shows an empty history despite the test report."
+  },
+  "overviewFixRelease": {
+    "commit": "944c12ccd40e2a28b19120b05fe2d2baff592b83",
+    "branch": "main",
+    "approvedExplicitly": true,
+    "project": "quod-cloud",
+    "projectId": "prj_NCMZCCixCOWgRhdqJsbwrsiDk6r8",
+    "teamId": "team_pS2ItabFXFb1wMYqHmNOufwc",
+    "rootDirectory": "cloud",
+    "deploymentId": "dpl_BaLTxDV3iokUQHXGGigjb5CQtFsa",
+    "deploymentUrl": "https://quod-cloud-6y9lx1a3b-jvaught01s-projects.vercel.app",
+    "target": "production",
+    "readyState": "READY",
+    "liveAlias": "https://app.quodci.com",
+    "mainAndDeploymentCommitVerified": true,
+    "gate": "https://github.com/pango07/quod/actions/runs/42289443643",
+    "gateTests": 457,
+    "routeCheck": {
+      "url": "https://app.quodci.com/quodci/ci-bench",
+      "status": 307,
+      "redirect": "/sign-in?returnTo=%2Fquodci%2Fci-bench"
+    },
+    "errorScan": {
+      "deploymentOnly": true,
+      "since": "10m",
+      "limit": 20,
+      "returnedErrorEntries": 0
+    },
+    "signedInOverviewRenderVerified": false,
+    "renderLimitation": "Browser host unavailable and native Chrome returned cgWindowNotFound. Previous verification covered the stored Tests report, not the newly released Overview."
   }
 }
