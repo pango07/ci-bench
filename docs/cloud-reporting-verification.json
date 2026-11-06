@@ -1,0 +1,36 @@
+{
+  "run": 42281619941,
+  "job": 128111787596,
+  "sourceCommit": "1286487",
+  "action": "e7098a6b5e5b8d460d0f63af782b25aaa23d4934",
+  "engine": "f9d8153",
+  "corpusCommit": "5eaa7e5160736054d53f8b71e2c522835eb427e0",
+  "runnerSeconds": 225,
+  "roundedMinutes": 4,
+  "conclusion": "success",
+  "semanticFingerprint": "09ebb9e3a722220d3a21ddfe9f63992a8a074b0fcaa95764e54c37be90d469cd",
+  "matchesPreviousC11Plain": true,
+  "files": 120,
+  "tests": 4131,
+  "passedTests": 4130,
+  "skippedTests": 1,
+  "recordedFiles": 120,
+  "replayedFiles": 0,
+  "audits": 0,
+  "cloudReportingWarnings": 0,
+  "ledgerUpload": {
+    "files": 123,
+    "kilobytes": 2470,
+    "milliseconds": 13224
+  },
+  "runnerImage": "ubuntu-26.04/20261101.186.1",
+  "dashboardUrl": "https://app.quodci.com/quodci/ci-bench/tests",
+  "renderVerified": false,
+  "notes": [
+    "Single reporting verification run; not a paired benchmark window.",
+    "Ledger upload confirmed in logs; run-report errors absent on the report call path. No report id printed by current CLI.",
+    "Signed-in UI unavailable; no deployment or share link created.",
+    "Controlled benchmark workflow defaults remain cloud=false; future Cloud-enabled windows must explicitly request cloud=true."
+  ],
+  "runUrl": "https://github.com/pango07/ci-bench/actions/runs/42281619941"
+}
