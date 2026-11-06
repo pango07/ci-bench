@@ -4,6 +4,9 @@
 # (project, commit, variant) and reads its timings from the jobs API
 # (docs/whole-job-replay.md section 6 in pango07/quod). Nothing here times
 # itself: every step is its own step so the jobs API has its duration.
+# Experimental variants use the Actions cache by default. `cloud: true`
+# also enables Cloud ledger storage and dashboard reports; its network work
+# belongs to that job's measured cost and must be labelled separately.
 #
 # Not meant to be dispatched by hand; bench-job.yml passes `cfg` (the corpus
 # entry's set-up flags and commands, JSON).
@@ -25,6 +28,11 @@ on:
       variant:
         description: plain | floor | quod-shipped | quod | quod-ts | quod-ts<N>
         required: true
+      cloud:
+        description: Enable Quod Cloud ledger storage and dashboard reports for experimental Quod variants
+        type: boolean
+        required: false
+        default: false
       cfg:
         description: 'JSON: {pnpm, bun, corepack, corepack_first, node, node_file, bun_file, install, build, test, env}'
         required: true
@@ -188,7 +196,7 @@ jobs:
         with:
           version: bin-f9d8153
           sha256: e133b009115afd10c255d2e67f43a80bcf5c61e6853992c84290a0a56afd92d8
-          cloud: 'false'
+          cloud: ${{ inputs.cloud && 'true' || 'false' }}
           task-cache: 'false'
           lineage-witness: 'true'
           timing-sensitive: ${{ startsWith(inputs.variant, 'quod-ts') && 'replay' || 'off' }}
@@ -296,8 +304,8 @@ jobs:
           sha256: e8b13b01329218d941177d61f381eb7341f152cdf65931b5ff06f121a06a3c3d
 
       # ---- the line under development: quod-action exp/whole-job ----
-      # (cloud off: the ledger and node_modules go through the Actions cache,
-      # so the bench does not depend on Quod Cloud.) Variants: quod (the
+      # (cloud is opt-in; node_modules still uses the Actions cache).
+      # Variants: quod (the
       # defaults: near-timeout margin 0.5), quod-ts (timing-sensitive: replay),
       # quod-ts<N> (timing-sensitive: replay, timing-audit: N).
       - name: env

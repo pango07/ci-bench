@@ -14,8 +14,11 @@
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 ids=${1:?ids}; commits=${2:-6}; variants=${3:-plain,quod-shipped}
+cloud=${BJ_CLOUD:-false}
+[[ "$cloud" = true || "$cloud" = false ]] || { echo 'BJ_CLOUD must be true or false' >&2; exit 1; }
 R=$GITHUB_REPOSITORY
 out=${BJ_OUT:-$RUNNER_TEMP/bj}; mkdir -p "$out/runs" "$out/src"
+jq -n --argjson cloud "$cloud" '{experimentalCloud: $cloud}' > "$out/settings.json"
 corpus=$here/../dropin/corpus.json
 IFS=, read -ra IDS <<<"$ids"; IFS=, read -ra VARS <<<"$variants"
 
@@ -65,7 +68,7 @@ chain() { # id variant
   fi
   for i in "${!cs[@]}"; do
     sha=${cs[$i]}; tag="$GITHUB_RUN_ID-$id-$v-$i"
-    gh workflow run bench-job-one.yml -R "$R" --ref "$br" -f tag="$tag" -f repo="$repo" -f commit="$sha" -f variant="$v" -f cfg="$c" \
+    gh workflow run bench-job-one.yml -R "$R" --ref "$br" -f tag="$tag" -f repo="$repo" -f commit="$sha" -f variant="$v" -f cfg="$c" -f cloud="$cloud" \
       || { echo "::warning::$tag: dispatch failed"; continue; }
     if [ "$v" = plain ] || [ "$v" = floor ]; then
       # No replay state flows between baseline jobs; dispatch all first.
@@ -144,5 +147,6 @@ done
 [ -f "$out/branches" ] && while read -r br; do gh api -X DELETE "repos/$R/git/refs/heads/$br" >/dev/null || true; done < "$out/branches"
 report_status=0
 node "$here/report.mjs" "$out/jobs.jsonl" "$out" | tee "$out/report.md" || report_status=$?
+printf '\nExperimental Quod variants: Cloud ledger and dashboard reporting requested: %s.\n' "$cloud" >> "$out/report.md"
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$out/report.md" >> "$GITHUB_STEP_SUMMARY"
 exit "$report_status"
