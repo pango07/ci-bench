@@ -25,12 +25,31 @@
   },
   "runnerImage": "ubuntu-26.04/20261101.186.1",
   "dashboardUrl": "https://app.quodci.com/quodci/ci-bench/tests",
-  "renderVerified": false,
+  "renderVerified": true,
   "notes": [
     "Single reporting verification run; not a paired benchmark window.",
     "Ledger upload confirmed in logs; run-report errors absent on the report call path. No report id printed by current CLI.",
-    "Signed-in UI unavailable; no deployment or share link created.",
+    "Signed-in Tests and test-detail pages verified. Browser-host access was unavailable, but native Chrome controls worked. No deployment or share link created.",
     "Controlled benchmark workflow defaults remain cloud=false; future Cloud-enabled windows must explicitly request cloud=true."
   ],
-  "runUrl": "https://github.com/pango07/ci-bench/actions/runs/42281619941"
+  "runUrl": "https://github.com/pango07/ci-bench/actions/runs/42281619941",
+  "reportId": "1276",
+  "reportUrl": "https://app.quodci.com/quodci/ci-bench/tests/1276",
+  "uiVerification": {
+    "date": "2026-11-06",
+    "method": "Signed-in Chrome accessibility tree through native app controls",
+    "testsPage": {
+      "filesRan": 120,
+      "filesReplayed": 0,
+      "saved": "0 s",
+      "result": "Tests passed",
+      "role": "Your tests \u00b7 recorded"
+    },
+    "detailPage": {
+      "githubRun": 42281619941,
+      "filesThatRan": 120,
+      "earlierRecordingFound": false
+    },
+    "overview": "Step-only Overview incorrectly shows an empty history despite the test report."
+  }
 }
