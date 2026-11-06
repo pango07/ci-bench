@@ -49,3 +49,30 @@ gh workflow run bench-vitest.yml -R pango07/ci-bench \
 | `observe`, `mutate` | the one-time observed run (`1`/`0`) and the commits that get a mutation check |
 
 The project needs a pnpm lockfile and vitest.
+
+## Whole-job recordings in Quod Cloud
+
+The experimental `quod` variants in `bench-job` / `bench-job-one` default
+to `cloud: false`. They record test results into the GitHub Actions cache,
+but send no test-run reports to Quod Cloud. Linking the repository in the
+dashboard shows GitHub activity; it does not import that cache or past runs.
+
+Pass `-f cloud=true` when dispatching either workflow to enable Cloud ledger
+storage and dashboard reporting. For example, on this branch:
+
+```sh
+gh workflow run bench-job.yml -R pango07/ci-bench \
+  --ref bench/cloud-reporting-codex \
+  -f only=convex-helpers -f commits=1 -f variants=quod-proof -f cloud=true
+```
+
+Cloud requests count toward the job's duration. The window artifact includes
+`settings.json`, and its report labels whether Cloud was requested; compare
+Cloud-enabled measurements separately from the cache-only benchmark window.
+`quod-shipped` retains the older Action's own default Cloud behavior.
+
+Test recordings appear under **CI Bench → Tests** at
+https://app.quodci.com/quodci/ci-bench/tests. The repository Overview uses
+step-level data. Runs executed in `pango07/quod` belong to that repository,
+not CI Bench. A recording with no replay can correctly show zero avoided
+test execution; uploading it alone does not establish whole-job savings.
