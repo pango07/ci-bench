@@ -26,7 +26,7 @@ on:
         description: The project commit
         required: true
       variant:
-        description: plain | floor | quod-shipped | quod | quod-ts | quod-ts<N>
+        description: plain | floor | quod-shipped | quod | quod-post | quod-ts | quod-ts<N>
         required: true
       cloud:
         description: Enable Quod Cloud ledger storage and dashboard reports for experimental Quod variants
@@ -191,7 +191,7 @@ jobs:
           V: ${{ inputs.variant }}
         run: a=${V#quod-ts}; [[ "$V" == quod-ts* && "$a" =~ ^[0-9]+$ ]] || a=0; echo "audit=$a" >> "$GITHUB_OUTPUT"
       - name: quod
-        if: startsWith(inputs.variant, 'quod') && inputs.variant != 'quod-shipped'
+        if: startsWith(inputs.variant, 'quod') && inputs.variant != 'quod-shipped' && inputs.variant != 'quod-post'
         uses: pango07/quod-action@e7098a6b5e5b8d460d0f63af782b25aaa23d4934 # full unit metadata keys; exact remote-gated bundle
         with:
           version: bin-f9d8153
@@ -201,6 +201,19 @@ jobs:
           lineage-witness: 'true'
           timing-sensitive: ${{ startsWith(inputs.variant, 'quod-ts') && 'replay' || 'off' }}
           timing-audit: ${{ steps.pol.outputs.audit }}
+      # Same engine and replay policy as quod; only ledger-save scheduling
+      # changes. Both variants prepare both Action revisions in this probe.
+      - name: quod
+        if: inputs.variant == 'quod-post'
+        uses: pango07/quod-action@41d6c96a2c78b2e1989e1710bae23eb9e165b86b # remote gate 42351489778
+        with:
+          version: bin-f9d8153
+          sha256: e133b009115afd10c255d2e67f43a80bcf5c61e6853992c84290a0a56afd92d8
+          cloud: ${{ inputs.cloud && 'true' || 'false' }}
+          task-cache: 'false'
+          lineage-witness: 'true'
+          timing-sensitive: 'off'
+          timing-audit: '0'
 
       - name: env
         env:
