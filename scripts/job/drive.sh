@@ -21,6 +21,25 @@ out=${BJ_OUT:-$RUNNER_TEMP/bj}; mkdir -p "$out/runs" "$out/src"
 jq -n --argjson cloud "$cloud" '{experimentalCloud: $cloud}' > "$out/settings.json"
 corpus=$here/../dropin/corpus.json
 IFS=, read -ra IDS <<<"$ids"; IFS=, read -ra VARS <<<"$variants"
+managed_window=false
+for variant in "${VARS[@]}"; do
+  if [[ "$variant" = managed || "$variant" = managed-control ]]; then managed_window=true; fi
+done
+if [ "$managed_window" = true ]; then
+  [[ "${#IDS[@]}" = 1 && "${IDS[0]}" = convex-helpers && "$commits" = 12 && "${BJ_REPEAT_FIRST:-false}" = false && "$cloud" = false ]] || {
+    echo '::error::managed window requires convex-helpers, all original 12 commits, no warm-up, and Cloud disabled'; exit 1;
+  }
+  [[ ",$variants," = *,plain,* && ",$variants," = *,managed-control,* && ",$variants," = *,managed,* ]] || {
+    echo '::error::managed window needs plain, managed-control, and managed variants'; exit 1;
+  }
+  node --test "$here/managed-evidence.test.cjs" "$here/report.test.mjs" || exit 1
+  action_sha=$(node -e 'const fs=require("node:fs");const s=fs.readFileSync(process.argv[1],"utf8");const m=/uses: pango07\/quod-action@([a-f0-9]{40}) # MANAGED_ACTION_SHA/.exec(s);if(!m||/^0+$/.test(m[1]))process.exit(1);console.log(m[1])' "$here/../../.github/workflows/bench-job-one.yml") || {
+    echo '::error::managed Action must be pinned to its remotely built full commit'; exit 1;
+  }
+  jq -n --arg harness "$GITHUB_SHA" --arg action "$action_sha" --arg run "$GITHUB_RUN_ID" \
+    '{experimentalCloud:false,managedWindow:true,cold:true,repeatFirst:false,harnessSha:$harness,actionSha:$action,coordinatorRun:$run,dependencyNamespace:"managed-<run>-<project>-<variant>"}' > "$out/settings.json"
+  cp "$here/managed-window.json" "$out/managed-window.json"
+fi
 
 cfg() { # the corpus entry's set-up flags and commands, as bench-job-one's `cfg`
   node -e '
@@ -56,7 +75,7 @@ wait_run() { # tag branch -> run id once it completes
 }
 
 chain() { # id variant
-  local id=$1 v=$2 repo sha c br i tag rid
+  local id=$1 v=$2 repo sha c br i tag rid cache_namespace=''
   local -a dispatched=()
   repo=$(meta "$id" repo); c=$(cfg "$id" "$v") || return 1
   mapfile -t cs < "$out/src/$id.commits"
@@ -66,9 +85,12 @@ chain() { # id variant
     gh api -X POST "repos/$R/git/refs" -f ref="refs/heads/$br" -f sha="$GITHUB_SHA" >/dev/null || { echo "::error::cannot create $br"; return 1; }
     echo "$br" >> "$out/branches"
   fi
+  if [[ "$v" = managed || "$v" = managed-control ]]; then
+    cache_namespace="managed-$GITHUB_RUN_ID-$id-$v"
+  fi
   for i in "${!cs[@]}"; do
     sha=${cs[$i]}; tag="$GITHUB_RUN_ID-$id-$v-$i"
-    gh workflow run bench-job-one.yml -R "$R" --ref "$br" -f tag="$tag" -f repo="$repo" -f commit="$sha" -f variant="$v" -f cfg="$c" -f cloud="$cloud" \
+    gh workflow run bench-job-one.yml -R "$R" --ref "$br" -f tag="$tag" -f repo="$repo" -f commit="$sha" -f variant="$v" -f cfg="$c" -f cloud="$cloud" -f cache_namespace="$cache_namespace" \
       || { echo "::warning::$tag: dispatch failed"; continue; }
     if [ "$v" = plain ] || [ "$v" = floor ]; then
       # No replay state flows between baseline jobs; dispatch all first.
@@ -77,7 +99,7 @@ chain() { # id variant
     fi
     rid=$(wait_run "$tag" "$br") || { echo "::warning::$tag: no run appeared"; continue; }
     echo "$id $v $i ${sha:0:9}: run $rid"
-    printf '{"id":"%s","variant":"%s","i":%d,"commit":"%s","run":%s,"evidence":true}\n' "$id" "$v" "$i" "$sha" "$rid" >> "$out/runs/$id-$v.jsonl"
+    printf '{"id":"%s","variant":"%s","i":%d,"commit":"%s","run":%s,"evidence":true,"cacheNamespace":"%s"}\n' "$id" "$v" "$i" "$sha" "$rid" "$cache_namespace" >> "$out/runs/$id-$v.jsonl"
   done
   for i in "${dispatched[@]}"; do
     sha=${cs[$i]}; tag="$GITHUB_RUN_ID-$id-$v-$i"
@@ -92,6 +114,9 @@ for id in "${IDS[@]}"; do
   repo=$(meta "$id" repo); end=${BJ_END:-$(meta "$id" sha)}
   git clone -q --filter=blob:none --no-checkout "https://github.com/$repo" "$out/src/$id"
   git -C "$out/src/$id" rev-list --first-parent -n "$commits" "$end" | tac > "$out/src/$id.commits"
+  if [ "$managed_window" = true ]; then
+    node "$here/managed-evidence.cjs" verify-window "$here/managed-window.json" "$out/src/$id.commits" || exit 1
+  fi
   if [ "${BJ_REPEAT_FIRST:-false}" = true ]; then
     # Repeat for every variant, preserving comparable indices and reporting
     # the cold and confirming jobs separately from subsequent changed commits.
@@ -120,7 +145,7 @@ cat "$out"/runs/*.jsonl 2>/dev/null | while read -r row; do
     echo "::error::run $rid did not have exactly one completed, non-skipped job; verification will fail"
     continue
   }
-  run=$(gh api "repos/$R/actions/runs/$rid" --jq '{run_started_at, created_at, conclusion}')
+  run=$(gh api "repos/$R/actions/runs/$rid" --jq '{id, head_sha, head_branch, event, path, run_attempt, run_started_at, created_at, conclusion}')
   jid=$(jq -r '.jobs[0].id' <<<"$jobs")
   : > "$out/log.txt" # a failed download must not reuse the previous job's evidence
   curl -fsSL --retry 4 --retry-all-errors --retry-delay 1 -o "$out/log.txt" -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
@@ -142,7 +167,8 @@ cat "$out"/runs/*.jsonl 2>/dev/null | while read -r row; do
     | grep -aE '^ (✓|×|↓) |^ +× |Test Files |^ +Tests  |^(# |ℹ )(tests|pass|fail|cancelled|skipped|todo) [0-9]+' \
     | sed -E 's/ [0-9.]+m?s *$//' | LC_ALL=C sort | jq -Rs .)
   semantic=$(LC_ALL=C sed 's/^[0-9TZ:.-]* //' "$out/log.txt" | awk '/^QUOD_BENCH_STATES /{print $2}' | tail -1 | jq -Rs 'rtrimstr("\n")')
-  jq -c --argjson semantic "${semantic:-\"\"}" --argjson jobs "$jobs" --argjson run "$run" --argjson quod "${quod:-\"\"}" --argjson sig "${sig:-\"\"}" --argjson image "${image:-\"\"}" '. + {semantic: $semantic, image: $image, run_meta: $run, job: ($jobs.jobs[0] | {id, created_at, started_at, completed_at, conclusion, steps: [.steps[] | {name, conclusion, started_at, completed_at}]}), quod: $quod, sig: $sig}' <<<"$row" >> "$out/jobs.jsonl"
+  managed_evidence=$(node "$here/managed-evidence.cjs" log "$out/log.txt") || managed_evidence='{"events":[],"states":null,"invalid":true}'
+  jq -c --argjson semantic "${semantic:-\"\"}" --argjson managed "$managed_evidence" --argjson jobs "$jobs" --argjson run "$run" --argjson quod "${quod:-\"\"}" --argjson sig "${sig:-\"\"}" --argjson image "${image:-\"\"}" '. + {semantic: $semantic, image: $image, managed: $managed, run_meta: $run, job: ($jobs.jobs[0] | {id, created_at, started_at, completed_at, conclusion, steps: [.steps[] | {name, conclusion, started_at, completed_at}]}), quod: $quod, sig: $sig}' <<<"$row" >> "$out/jobs.jsonl"
 done
 [ -f "$out/branches" ] && while read -r br; do gh api -X DELETE "repos/$R/git/refs/heads/$br" >/dev/null || true; done < "$out/branches"
 report_status=0

@@ -17,19 +17,19 @@ on:
       only:
         description: Comma-separated corpus ids
         required: false
-        default: zustand,convex-helpers,mcp-sdk,vercel-ai
+        default: convex-helpers
       commits:
         description: Consecutive first-parent commits per project, ending at the corpus sha
         required: false
-        default: '6'
+        default: '12'
       end:
         description: The window's last commit (default the corpus sha)
         required: false
         default: ''
       variants:
-        description: Comma-separated variants (plain, quod-shipped, quod)
+        description: Comma-separated variants (floor, plain, managed-control, managed, or historical quod variants)
         required: false
-        default: plain,quod-shipped
+        default: floor,plain,managed-control,managed
       warm_first:
         description: Diagnostic only; repeat the first commit once to confirm its initial records
         required: false
@@ -72,6 +72,7 @@ jobs:
           path: |
             ${{ runner.temp }}/bj/expected.jsonl
             ${{ runner.temp }}/bj/settings.json
+            ${{ runner.temp }}/bj/managed-window.json
             ${{ runner.temp }}/bj/jobs.jsonl
             ${{ runner.temp }}/bj/job-metrics.json
             ${{ runner.temp }}/bj/report.md

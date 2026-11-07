@@ -1,0 +1,128 @@
+{
+  "schema": "quod-managed-original-window-v1",
+  "repository": "get-convex/convex-helpers",
+  "cold": true,
+  "repeatFirst": false,
+  "count": 12,
+  "variants": [
+    "floor",
+    "plain",
+    "managed-control",
+    "managed"
+  ],
+  "commands": {
+    "install": "npm ci",
+    "build": "npm run build",
+    "test": "npm run test"
+  },
+  "managedContract": {
+    "env": {
+      "NODE_ENV": "test"
+    },
+    "epoch": 1700000000000,
+    "seed": 42
+  },
+  "candidate": {
+    "file": "packages/convex-helpers/server/stream.property.test.ts",
+    "sourceSha256": "9798bab303233bca846a89ccb39ce28bd968329e0704f3e5d67adca934c11c75",
+    "tests": 47
+  },
+  "commits": [
+    {
+      "i": 0,
+      "sha": "1d7c57881d153d366becbc5d8351276b0d09b086",
+      "files": 120,
+      "tests": 4129,
+      "ordinarySemanticSha256": "4ecbdc19ec078761acb2d9535ee26e225508cf16431b2d600e003924c65ddc65",
+      "releaseTests": false
+    },
+    {
+      "i": 1,
+      "sha": "290b146e0793f0d689150f3c53a1f1c7269020d1",
+      "files": 120,
+      "tests": 4129,
+      "ordinarySemanticSha256": "4ecbdc19ec078761acb2d9535ee26e225508cf16431b2d600e003924c65ddc65",
+      "releaseTests": false
+    },
+    {
+      "i": 2,
+      "sha": "1815d4a72a9714311dfed82a101d8c817830fb0e",
+      "files": 120,
+      "tests": 4129,
+      "ordinarySemanticSha256": "4ecbdc19ec078761acb2d9535ee26e225508cf16431b2d600e003924c65ddc65",
+      "releaseTests": true
+    },
+    {
+      "i": 3,
+      "sha": "03ffe84ef4431d7b02dd0e6903e36c461ed9223e",
+      "files": 120,
+      "tests": 4129,
+      "ordinarySemanticSha256": "4ecbdc19ec078761acb2d9535ee26e225508cf16431b2d600e003924c65ddc65",
+      "releaseTests": true
+    },
+    {
+      "i": 4,
+      "sha": "6b17e1514f5222e9c019e177e36384df95a3ff25",
+      "files": 120,
+      "tests": 4129,
+      "ordinarySemanticSha256": "4ecbdc19ec078761acb2d9535ee26e225508cf16431b2d600e003924c65ddc65",
+      "releaseTests": true
+    },
+    {
+      "i": 5,
+      "sha": "49a82e54416f9d7957dcbdf5953f628a54693355",
+      "files": 120,
+      "tests": 4129,
+      "ordinarySemanticSha256": "4ecbdc19ec078761acb2d9535ee26e225508cf16431b2d600e003924c65ddc65",
+      "releaseTests": true
+    },
+    {
+      "i": 6,
+      "sha": "51f7bf84887625ae8fadbc29f1f9a028e271c8bb",
+      "files": 120,
+      "tests": 4129,
+      "ordinarySemanticSha256": "4ecbdc19ec078761acb2d9535ee26e225508cf16431b2d600e003924c65ddc65",
+      "releaseTests": true
+    },
+    {
+      "i": 7,
+      "sha": "f5c2b9e9ceb4c477e7216ab514ce0d370c3af311",
+      "files": 120,
+      "tests": 4130,
+      "ordinarySemanticSha256": "2610c747ae4bdae19f855bc06bf42eb1a537ce71e1c3302155774d9529b08494",
+      "releaseTests": true
+    },
+    {
+      "i": 8,
+      "sha": "d244cf22ddd8d5a12e4661edfa1ba6cc09468cb8",
+      "files": 120,
+      "tests": 4131,
+      "ordinarySemanticSha256": "09ebb9e3a722220d3a21ddfe9f63992a8a074b0fcaa95764e54c37be90d469cd",
+      "releaseTests": true
+    },
+    {
+      "i": 9,
+      "sha": "c976cabdff07b9fc671473a3f2020b0ded436d2f",
+      "files": 120,
+      "tests": 4131,
+      "ordinarySemanticSha256": "09ebb9e3a722220d3a21ddfe9f63992a8a074b0fcaa95764e54c37be90d469cd",
+      "releaseTests": true
+    },
+    {
+      "i": 10,
+      "sha": "6f830b66f7cdf80c969d21f9ee8cf49d35d64be2",
+      "files": 120,
+      "tests": 4131,
+      "ordinarySemanticSha256": "09ebb9e3a722220d3a21ddfe9f63992a8a074b0fcaa95764e54c37be90d469cd",
+      "releaseTests": true
+    },
+    {
+      "i": 11,
+      "sha": "5eaa7e5160736054d53f8b71e2c522835eb427e0",
+      "files": 120,
+      "tests": 4131,
+      "ordinarySemanticSha256": "09ebb9e3a722220d3a21ddfe9f63992a8a074b0fcaa95764e54c37be90d469cd",
+      "releaseTests": true
+    }
+  ]
+}

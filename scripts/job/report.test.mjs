@@ -9,12 +9,13 @@ const row = (variant, sig = 'test passed\ntest passed\n') => ({
   id: 'fixture', variant, i: 0, commit: 'abc', run: 1, sig, quod: '',
   job: { created_at: '2026-11-05T00:00:00Z', started_at: '2026-11-05T00:00:00Z', completed_at: '2026-11-05T00:00:10Z', conclusion: 'success', steps: [] },
 })
-function report(rows, expected) {
+function report(rows, expected, settings) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quod-report-'))
   try {
     const input = path.join(dir, 'jobs.jsonl')
     fs.writeFileSync(input, rows.map(JSON.stringify).join('\n'))
     if (expected) fs.writeFileSync(path.join(dir, 'expected.jsonl'), expected.map(JSON.stringify).join('\n'))
+    if(settings)fs.writeFileSync(path.join(dir,'settings.json'),JSON.stringify(settings))
     const result = spawnSync(process.execPath, [new URL('./report.mjs', import.meta.url).pathname, input, dir], { encoding: 'utf8' })
     result.metrics = JSON.parse(fs.readFileSync(path.join(dir, 'job-metrics.json')))
     return result
@@ -70,4 +71,43 @@ test('per-test evidence is mandatory when the job opted in', () => {
   assert.equal(report([p,q]).status,0)
   q.semantic='different'
   assert.equal(report([p,q]).status,1)
+})
+
+function managedWindow() {
+  const manifest=JSON.parse(fs.readFileSync(new URL('./managed-window.json',import.meta.url)))
+  const settings={managedWindow:true,cold:true,repeatFirst:false,harnessSha:'1'.repeat(40),actionSha:'2'.repeat(40)}
+  const variants=['floor','plain','managed-control','managed'],rows=[]
+  for(const commit of manifest.commits)for(const [v,variant]of variants.entries()) {
+    const r={...row(variant),id:'convex-helpers',i:commit.i,commit:commit.sha,run:1000+commit.i*4+v,
+      image:'ubuntu-26.04/20261101.186.1',run_meta:{conclusion:'success',head_sha:settings.harnessSha},
+      job:{...row(variant).job,id:2000+commit.i*4+v},semantic:commit.ordinarySemanticSha256,
+      cacheNamespace:variant.startsWith('managed')?'managed-test-'+variant:'',
+      managed:{invalid:false,events:[],states:{sha256:commit.ordinarySemanticSha256,files:120,tests:commit.tests},
+        releaseSignature:commit.i>=2?['cancelled 0','fail 0','pass 5','skipped 0','tests 5','todo 0']:[]}}
+    if(variant.startsWith('managed'))r.managed.events=[{mode:variant==='managed-control'?'control':'v0',hit:variant==='managed'&&commit.i>0,
+      managedExecutions:variant==='managed'&&commit.i>0?0:1,fallback:false,effectsSha256:'a'.repeat(64),executionKey:'b'.repeat(64),
+      nativeFingerprintSha256:'c'.repeat(64),runtimeClassSha256:'d'.repeat(64),ordinary:{exitCode:0}}]
+    rows.push(r)
+  }
+  return{rows,settings}
+}
+test('the complete original managed window compares all merged states and independent effects',()=>{
+  const {rows,settings}=managedWindow();const result=report(rows,rows,settings)
+  assert.equal(result.status,0,result.stderr)
+  assert.equal(result.metrics.managedExperiment.variants.managed.candidateReplays,11)
+  assert.equal(result.metrics.managedExperiment.variants.managed.fullJobHits,0)
+})
+test('managed display-summary differences do not mask or invent merged result differences',()=>{
+  const {rows,settings}=managedWindow();const managed=rows.find(row=>row.variant==='managed')
+  managed.sig='split reporter summary differs\n'
+  assert.equal(report(rows,rows,settings).status,0)
+  managed.semantic='f'.repeat(64)
+  assert.equal(report(rows,rows,settings).status,1)
+})
+test('candidate effect disagreement and an omitted release-test tail fail the window',()=>{
+  const {rows,settings}=managedWindow();const managed=rows.find(row=>row.variant==='managed'&&row.i===2)
+  managed.managed.events[0].effectsSha256='e'.repeat(64)
+  assert.equal(report(rows,rows,settings).status,1)
+  managed.managed.events[0].effectsSha256='a'.repeat(64);managed.managed.releaseSignature=[]
+  assert.equal(report(rows,rows,settings).status,1)
 })
