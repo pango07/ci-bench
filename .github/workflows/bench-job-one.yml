@@ -192,10 +192,10 @@ jobs:
         run: a=${V#quod-ts}; [[ "$V" == quod-ts* && "$a" =~ ^[0-9]+$ ]] || a=0; echo "audit=$a" >> "$GITHUB_OUTPUT"
       - name: quod
         if: startsWith(inputs.variant, 'quod') && inputs.variant != 'quod-shipped'
-        uses: pango07/quod-action@a1b9a37a4bf38e1883a4afc07d397616fa985942 # descriptor-safe recorder; remote gate 42355652832
+        uses: pango07/quod-action@57269ba1c1b43ae003dd64a5a5cc6c0df8f0e4b3 # filesystem descriptor fallback; remote gate 42361428513
         with:
-          version: bin-2bd297b
-          sha256: 00b99d670054bed66f4111bec627c1366f2b110145abc2efcecd9985cf9af1c0
+          version: bin-800771d
+          sha256: 51262a23754deffb5cfdf8f47cb5e4acbaa577487329d3f4f46e4709a5719205
           cloud: ${{ inputs.cloud && 'true' || 'false' }}
           task-cache: 'false'
           lineage-witness: 'true'
