@@ -75,13 +75,13 @@ test('per-test evidence is mandatory when the job opted in', () => {
 
 function managedWindow() {
   const manifest=JSON.parse(fs.readFileSync(new URL('./managed-window.json',import.meta.url)))
-  const settings={managedWindow:true,cold:true,repeatFirst:false,harnessSha:'1'.repeat(40),actionSha:'2'.repeat(40)}
+  const settings={managedWindow:true,cold:true,repeatFirst:false,harnessSha:'1'.repeat(40),actionSha:'2'.repeat(40),coordinatorRun:'99'}
   const variants=['floor','plain','managed-control','managed'],rows=[]
   for(const commit of manifest.commits)for(const [v,variant]of variants.entries()) {
     const r={...row(variant),id:'convex-helpers',i:commit.i,commit:commit.sha,run:1000+commit.i*4+v,
       image:'ubuntu-26.04/20261101.186.1',run_meta:{conclusion:'success',head_sha:settings.harnessSha},
       job:{...row(variant).job,id:2000+commit.i*4+v},semantic:commit.ordinarySemanticSha256,
-      cacheNamespace:variant.startsWith('managed')?'managed-test-'+variant:'',
+      cacheNamespace:variant.startsWith('managed')?'managed-99-convex-helpers-'+variant:'',
       managed:{invalid:false,events:[],states:{sha256:commit.ordinarySemanticSha256,files:120,tests:commit.tests},
         releaseSignature:commit.i>=2?['cancelled 0','fail 0','pass 5','skipped 0','tests 5','todo 0']:[]}}
     if(variant.startsWith('managed'))r.managed.events=[{mode:variant==='managed-control'?'control':'v0',hit:variant==='managed'&&commit.i>0,
@@ -96,6 +96,9 @@ test('the complete original managed window compares all merged states and indepe
   assert.equal(result.status,0,result.stderr)
   assert.equal(result.metrics.managedExperiment.variants.managed.candidateReplays,11)
   assert.equal(result.metrics.managedExperiment.variants.managed.fullJobHits,0)
+  assert.equal(result.metrics.per.find(row=>row.variant==='managed'&&row.i===0).hit,'record')
+  assert.equal(result.metrics.per.find(row=>row.variant==='managed'&&row.i===1).hit,'partial-hit')
+  assert.equal(result.metrics.per.find(row=>row.variant==='managed-control'&&row.i===1).hit,'record')
 })
 test('managed display-summary differences do not mask or invent merged result differences',()=>{
   const {rows,settings}=managedWindow();const managed=rows.find(row=>row.variant==='managed')
@@ -110,4 +113,21 @@ test('candidate effect disagreement and an omitted release-test tail fail the wi
   assert.equal(report(rows,rows,settings).status,1)
   managed.managed.events[0].effectsSha256='a'.repeat(64);managed.managed.releaseSignature=[]
   assert.equal(report(rows,rows,settings).status,1)
+})
+test('a cold c0 receipt hit fails even when all states and effects agree',()=>{
+  const {rows,settings}=managedWindow();const first=rows.find(row=>row.variant==='managed'&&row.i===0)
+  first.managed.events[0].hit=true;first.managed.events[0].managedExecutions=0
+  const result=report(rows,rows,settings)
+  assert.equal(result.status,1)
+  assert(result.metrics.per.find(row=>row.variant==='managed'&&row.i===0).wrong.includes('cold c0 reused a receipt'))
+})
+test('cache namespace drift, another coordinator namespace and shared control scope fail',()=>{
+  for(const mutate of [
+    rows=>{rows.find(row=>row.variant==='managed'&&row.i===1).cacheNamespace='managed-99-convex-helpers-other'},
+    rows=>{for(const row of rows.filter(row=>row.variant==='managed'))row.cacheNamespace='managed-100-convex-helpers-managed'},
+    rows=>{for(const row of rows.filter(row=>row.variant==='managed-control'))row.cacheNamespace='managed-99-convex-helpers-managed'},
+  ]){
+    const {rows,settings}=managedWindow();mutate(rows)
+    assert.equal(report(rows,rows,settings).status,1)
+  }
 })

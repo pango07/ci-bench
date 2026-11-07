@@ -65,6 +65,7 @@ function managedWrong(r, p) {
   if (event.hit && (event.fallback || event.managedExecutions !== 0)) diff.push('a replay also executed/fell back')
   if (!event.fallback && !event.hit && event.managedExecutions !== 1) diff.push('a cold managed result did not execute')
   if (r.variant === 'managed-control' && event.hit) diff.push('uncached managed control reused a receipt')
+  if (r.i === 0 && event.hit) diff.push('cold c0 reused a receipt')
   if (!event.fallback && (!digest(event.effectsSha256) || !digest(event.executionKey) || !digest(event.nativeFingerprintSha256))) diff.push('missing closed execution/effect/native identity')
   if (r.variant === 'managed') {
     const control = controlOf.get(`${r.id} ${r.i} ${r.commit}`)?.managed?.events
@@ -109,7 +110,7 @@ const per = rows.map((r) => {
   return {
     id: r.id, variant: r.variant, i: r.i, commit: r.commit, run: r.run, conclusion: j.conclusion,
     wall: t(j.completed_at) - t(j.created_at), queue: t(j.started_at) - t(j.created_at), runner, ...g, work, fixed: runner - work,
-    boot_setup: g.boot + g.setup, lineage: [...(r.quod ?? '').matchAll(/lineage: (\d+) promoted, (\d+) plain audits, (\d+) disagreed, (\d+) revoked/g)].reduce((a, m) => ({promoted:a.promoted + +m[1],audits:a.audits + +m[2],disagreed:a.disagreed + +m[3],revoked:a.revoked + +m[4]}), {promoted:0,audits:0,disagreed:0,revoked:0}), hit: managedVariant(r.variant) ? (r.managed?.events?.[0]?.fallback ? 'off' : 'partial') : hit(r.quod), image: r.image ?? '', quod: r.quod, managed: r.managed ?? null, cacheNamespace:r.cacheNamespace ?? '', billed: Math.ceil(runner / 60), wrong: wrong(r), lines: (r.sig ?? '').split('\n').filter(Boolean).length,
+    boot_setup: g.boot + g.setup, lineage: [...(r.quod ?? '').matchAll(/lineage: (\d+) promoted, (\d+) plain audits, (\d+) disagreed, (\d+) revoked/g)].reduce((a, m) => ({promoted:a.promoted + +m[1],audits:a.audits + +m[2],disagreed:a.disagreed + +m[3],revoked:a.revoked + +m[4]}), {promoted:0,audits:0,disagreed:0,revoked:0}), hit: managedVariant(r.variant) ? (r.managed?.events?.[0]?.fallback ? 'off' : r.managed?.events?.[0]?.hit ? 'partial-hit' : 'record') : hit(r.quod), image: r.image ?? '', quod: r.quod, managed: r.managed ?? null, cacheNamespace:r.cacheNamespace ?? '', billed: Math.ceil(runner / 60), wrong: wrong(r), lines: (r.sig ?? '').split('\n').filter(Boolean).length,
   }
 })
 
@@ -197,7 +198,8 @@ if (rows.some(row => managedVariant(row.variant))) {
   const settingsFile=outDir && path.join(outDir,'settings.json')
   const settings=settingsFile && fs.existsSync(settingsFile) ? JSON.parse(fs.readFileSync(settingsFile)) : null
   if(!settings || settings.managedWindow!==true || settings.cold!==true || settings.repeatFirst!==false ||
-    !/^[a-f0-9]{40}$/.test(settings.harnessSha ?? '') || !/^[a-f0-9]{40}$/.test(settings.actionSha ?? '')) managedVerificationErrors.push('missing full pinned harness/action cold-window provenance')
+    !/^[a-f0-9]{40}$/.test(settings.harnessSha ?? '') || !/^[a-f0-9]{40}$/.test(settings.actionSha ?? '') ||
+    !/^\d+$/.test(settings.coordinatorRun ?? '')) managedVerificationErrors.push('missing full pinned harness/action cold-window provenance')
   if (new Set(actualIdentities).size !== rows.length) managedVerificationErrors.push('duplicate measured job identities')
   if (new Set(rows.map(row => row.run)).size !== rows.length || new Set(rows.map(row => row.job.id)).size !== rows.length) managedVerificationErrors.push('duplicate run/job ids')
   for (const variant of ['plain','managed-control','managed']) if (!allVariants.includes(variant)) managedVerificationErrors.push('missing variant '+variant)
@@ -213,8 +215,11 @@ if (rows.some(row => managedVariant(row.variant))) {
       const known = manifest.commits[row.i], states = row.managed?.states
       if (!known || row.semantic !== known.ordinarySemanticSha256 || states?.files !== known.files || states?.tests !== known.tests) managedVerificationErrors.push('original full result differs '+row.run)
     }
-    if (managedVariant(row.variant) && !row.cacheNamespace) managedVerificationErrors.push('missing cold cache namespace '+row.run)
+    if (managedVariant(row.variant) && row.cacheNamespace!==`managed-${settings?.coordinatorRun}-convex-helpers-${row.variant}`) managedVerificationErrors.push('different cold chain cache namespace '+row.run)
   }
+  const managedNamespaces=new Set(rows.filter(row=>row.variant==='managed').map(row=>row.cacheNamespace))
+  const controlNamespaces=new Set(rows.filter(row=>row.variant==='managed-control').map(row=>row.cacheNamespace))
+  if(managedNamespaces.size!==1 || controlNamespaces.size!==1 || [...managedNamespaces].some(value=>controlNamespaces.has(value)))managedVerificationErrors.push('managed/control namespaces must each be constant and independent')
   const total = variant => {
     const entries=per.filter(row=>row.variant===variant), after=entries.filter(row=>row.i>0)
     return {jobs:entries.length,runnerSeconds:sum(entries.map(row=>row.runner)),modeledMinutes:sum(entries.map(row=>row.billed)),

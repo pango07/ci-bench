@@ -398,7 +398,8 @@ jobs:
         run: |
           cat > "$RUNNER_TEMP/bench-vitest-report.cjs" <<'JS'
           const entry = process.argv[1] || ''
-          if (/(?:^|[\/])vitest(?:\.m?js)?$/.test(entry) && process.argv.includes('run')) {
+          const hasOutputFile = process.argv.some(arg => /^--outputFile(?:\.json)?(?:=|$)/.test(arg))
+          if (/(?:^|[\/])vitest(?:\.m?js)?$/.test(entry) && process.argv.includes('run') && !hasOutputFile) {
             process.argv.push('--reporter=default', '--reporter=json', '--outputFile.json=' + process.env.BENCH_VITEST_REPORT)
           }
           JS
@@ -406,7 +407,7 @@ jobs:
 
       - name: quod
         id: quod-managed
-        uses: pango07/quod-action@17bc6ef1b5fe7096273585371819601ce51e989d # MANAGED_ACTION_SHA: replace with remotely built Action commit
+        uses: pango07/quod-action@3711eecd8a263e5bd403f0b2e5d620fe56efd06d # MANAGED_ACTION_SHA: replace with remotely built Action commit
         with:
           managed-vitest: ${{ inputs.variant == 'managed-control' && 'control' || 'v0' }}
           managed-env: '{"NODE_ENV":"test"}'

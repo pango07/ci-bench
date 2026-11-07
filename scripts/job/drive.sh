@@ -32,7 +32,7 @@ if [ "$managed_window" = true ]; then
   [[ ",$variants," = *,plain,* && ",$variants," = *,managed-control,* && ",$variants," = *,managed,* ]] || {
     echo '::error::managed window needs plain, managed-control, and managed variants'; exit 1;
   }
-  node --test "$here/managed-evidence.test.cjs" "$here/report.test.mjs" || exit 1
+  node --test "$here/managed-evidence.test.cjs" "$here/managed-preloader.test.cjs" "$here/report.test.mjs" || exit 1
   action_sha=$(node -e 'const fs=require("node:fs");const s=fs.readFileSync(process.argv[1],"utf8");const m=/uses: pango07\/quod-action@([a-f0-9]{40}) # MANAGED_ACTION_SHA/.exec(s);if(!m||/^0+$/.test(m[1]))process.exit(1);console.log(m[1])' "$here/../../.github/workflows/bench-job-one.yml") || {
     echo '::error::managed Action must be pinned to its remotely built full commit'; exit 1;
   }
