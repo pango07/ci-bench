@@ -407,7 +407,7 @@ jobs:
 
       - name: quod
         id: quod-managed
-        uses: pango07/quod-action@d79c8635f4dbc93c842ec1da8bd5ee6bf8e72928 # MANAGED_ACTION_SHA: GitHub-built runtime and cache authority capture
+        uses: pango07/quod-action@c77d86564686c439aa8e5b9d42a1f8573da771b8 # MANAGED_ACTION_SHA: GitHub-built runtime and cache authority capture
         with:
           managed-vitest: ${{ inputs.variant == 'managed-control' && 'control' || 'v0' }}
           managed-env: '{"NODE_ENV":"test"}'
