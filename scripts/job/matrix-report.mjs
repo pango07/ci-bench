@@ -5,6 +5,7 @@ import {fileURLToPath} from 'node:url'
 import {createRequire} from 'node:module'
 const require = createRequire(import.meta.url)
 const {sha} = require('./matrix-evidence.cjs')
+const {resolveWindowProfile, PROPERTY47_VALUE} = require('./property47-window-profile.cjs')
 const VARIANTS = ['floor', 'plain', 'managed-control', 'managed']
 const MANIFEST_SHA = 'cda867393ad8d174a725a5cc74efd99557ce8531d690115200deebdf21a1b897'
 const fullSha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value) && !/^0+$/.test(value)
@@ -15,6 +16,9 @@ const sum = rows => rows.reduce((a, b) => a + b, 0)
 const time = value => Date.parse(value) / 1000
 export function buildMatrixReport({rows, expected, settings, manifest, observedRuns}) {
   const issues = [], metrics = [], fail = message => issues.push(message)
+  let profile
+  try {profile = resolveWindowProfile(settings?.candidateProfile)}
+  catch {fail('unknown closed window candidate profile'); profile = resolveWindowProfile()}
   if (!settings || settings.schema !== 'quod-matrix-original-window-settings-v1' || settings.cold !== true ||
       settings.repeatFirst !== false || !/^\d+$/.test(settings.coordinatorRun || '') ||
       !fullSha(settings.harnessSha) || !fullSha(settings.actionSha) || !fullSha(settings.sourceSha)) fail('missing approved full-pin cold-window provenance')
@@ -26,7 +30,7 @@ export function buildMatrixReport({rows, expected, settings, manifest, observedR
   if (new Set(rows.map(row => row.run)).size !== rows.length || new Set(rows.map(row => row.job?.id)).size !== rows.length) fail('duplicate run/job IDs')
   if (!Array.isArray(observedRuns) || observedRuns.length !== 4) fail('missing independently enumerated four branch-run sets')
   else for (const variant of VARIANTS) {
-    const branch = `bench/matrix-wj-${settings?.coordinatorRun}-convex-helpers-${variant}`
+    const branch = `bench/${profile.branchPrefix}-${settings?.coordinatorRun}-convex-helpers-${variant}`
     const actual = observedRuns.filter(row => row.branch === branch)
     if (actual.length !== 1 || actual[0].total_count !== 12 || actual[0].workflow_runs?.length !== 12 ||
         actual[0].workflow_runs.map(row => row.id).sort().join(',') !== rows.filter(row => row.variant === variant).map(row => row.run).sort().join(',')) fail('extra/missing independently enumerated executions for ' + variant)
@@ -37,7 +41,7 @@ export function buildMatrixReport({rows, expected, settings, manifest, observedR
     const label = `${row.variant}/c${row.i}/${row.run}`, known = manifest.commits[row.i]
     const j = row.job, run = row.run_meta
     if (!known || known.sha !== row.commit || row.id !== 'convex-helpers' || !VARIANTS.includes(row.variant)) {fail(label + ': unknown selected input'); continue}
-    const branch = `bench/matrix-wj-${settings?.coordinatorRun}-convex-helpers-${row.variant}`
+    const branch = `bench/${profile.branchPrefix}-${settings?.coordinatorRun}-convex-helpers-${row.variant}`
     if (row.branch !== branch || run?.head_branch !== branch || run?.head_sha !== settings?.harnessSha ||
         run?.event !== 'workflow_dispatch' || run?.run_attempt !== 1 || run?.path !== '.github/workflows/bench-job-one.yml') fail(label + ': workflow source/branch/attempt changed')
     if (run?.id !== row.run || run?.conclusion !== 'success' || j?.conclusion !== 'success' || j?.status !== 'completed') fail(label + ': measured run/job failed or incomplete')
@@ -75,7 +79,7 @@ export function buildMatrixReport({rows, expected, settings, manifest, observedR
     }
     const event = parsed?.event, plain = find('plain', row.i)?.matrix?.states
     if (!event || event.schema !== 'quod-managed-matrix-action-result-v1' || event.exitCode !== 0 || event.fullJobHit !== false ||
-        event.mode !== (row.variant === 'managed' ? 'matrix-research' : 'matrix-control') || event.stickyManagedFailure !== false ||
+        event.mode !== (row.variant === 'managed' ? profile.managedMode : profile.controlMode) || event.stickyManagedFailure !== false ||
         event.selectedScope?.kind !== 'complete-original-default-selection' || event.selectedInstances !== known.files ||
         event.logicalStates !== known.tests || event.logicalSha256 !== evidence?.strongLogicalSha256 ||
         !digest(evidence?.fileStatesSha256) || !digest(evidence?.bridgeSummarySha256)) fail(label + ': invalid full matrix result contract')
@@ -85,12 +89,18 @@ export function buildMatrixReport({rows, expected, settings, manifest, observedR
     if (event && (event.replayedInstances + event.nativeSpecsExecuted !== known.files ||
         event.replayedInstances + event.managedExecutions > event.candidateInstances || event.candidateInstances > known.files ||
         event.skippedCompilations > event.replayedInstances)) fail(label + ': omitted/duplicated actual specification work')
-    const namespace = `matrix-${settings?.coordinatorRun}-convex-helpers-${row.variant}`
+    const namespace = `${profile.namespacePrefix}-${settings?.coordinatorRun}-convex-helpers-${row.variant}`
     if (row.cacheNamespace !== namespace) fail(label + ': cold namespace changed')
     if (event?.cacheTransport?.namespace !== namespace + '-' || evidence?.transport?.namespace !== namespace + '-') fail(label + ': actual collection used a different namespace')
     if (row.variant === 'managed-control' && (event?.replayedInstances !== 0 || event?.skippedCompilations !== 0 || event?.recordedReceipts !== 0 ||
         evidence?.transport?.sdkRestoreEvents !== 0 || evidence?.transport?.sdkSaveEvents !== 0 || evidence?.transport?.entryEvents !== 0)) fail(label + ': independent uncached control performed cache operations/reused/published')
     if (event?.cacheTransport?.scopeInput?.runtimeArchiveSha256 !== settings?.runtimeArchiveSha256) fail(label + ': runtime archive differs from the full-pinned Action manifest')
+    if (profile.property47 && (event?.candidateInstances !== 1 || event?.replayedInstances > 1 || event?.managedExecutions > 1 ||
+        event?.recordedReceipts > 1 || event?.nativeSpecsExecuted !== known.files - event?.replayedInstances ||
+        event?.cacheTransport?.scopeInput?.candidateProfile !== profile.label ||
+        JSON.stringify(evidence?.candidateProfile) !== JSON.stringify(PROPERTY47_VALUE) ||
+        !digest(evidence?.dispatchRaw?.sha256) || !Number.isSafeInteger(evidence?.dispatchRaw?.bytes) || evidence.dispatchRaw.bytes <= 0))
+      fail(label + ': finite property47 roster, collection scope or raw dispatch evidence differs')
     if (row.variant === 'managed') {
       const control = find('managed-control', row.i)?.matrix?.states
       if (!control || evidence?.strongLogicalSha256 !== control.strongLogicalSha256 || evidence?.fileStatesSha256 !== control.fileStatesSha256) fail(label + ': project-aware rows/file states differ from independent control')
@@ -110,7 +120,7 @@ export function buildMatrixReport({rows, expected, settings, manifest, observedR
   }))
   const managed = variants.managed, plain = variants.plain, prior = {runnerSeconds: 1735, modeledMinutes: 36}
   return {schema: 'quod-matrix-original-window-report-v1', passed: issues.length === 0, issues,
-    provenance: settings, prior, variants, per: metrics, fullJobHit: false, independentArtifactAudit: 'pending separate archive/data verification',
+    provenance: settings, ...(profile.property47 ? {candidateProfile: PROPERTY47_VALUE} : {}), prior, variants, per: metrics, fullJobHit: false, independentArtifactAudit: 'pending separate archive/data verification',
     objectives: {evaluable: issues.length === 0,
       runnerSeconds: {halfFresh: issues.length ? null : managed.runnerSeconds <= plain.runnerSeconds / 2, halfPrior: issues.length ? null : managed.runnerSeconds <= prior.runnerSeconds / 2},
       modeledMinutes: {halfFresh: issues.length ? null : managed.modeledMinutes <= plain.modeledMinutes / 2, halfPrior: issues.length ? null : managed.modeledMinutes <= prior.modeledMinutes / 2}},

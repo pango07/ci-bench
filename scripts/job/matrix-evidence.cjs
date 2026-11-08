@@ -5,6 +5,7 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const assert = require('node:assert/strict')
 const {states: ordinaryStates} = require('./evidence.cjs')
+const {resolveWindowProfile, property47Evidence} = require('./property47-window-profile.cjs')
 const MAX_BYTES = 32 * 1024 * 1024, MAX_LOG = 128 * 1024 * 1024
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex')
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
@@ -149,7 +150,8 @@ function transportEvidence({event, temporary, out, namespace, variant}) {
   return {namespace: event.cacheTransport.namespace, sdkRestoreEvents: restores.length, sdkSaveEvents: saves.length, entryEvents: entries.length,
     restoreReason: restores[0]?.reason || null, rawSha256: transport.sha256, packs}
 }
-function collect({variant, project, out, temporary, actionSha, sourceSha, harnessSha, commit, namespace}) {
+function collect({variant, project, out, temporary, actionSha, sourceSha, harnessSha, commit, namespace, candidateProfile}) {
+  const profile = resolveWindowProfile(candidateProfile)
   assert(['plain', 'managed-control', 'managed'].includes(variant), 'measured variant required')
   assert(fullSha(actionSha) && fullSha(sourceSha) && fullSha(harnessSha) && fullSha(commit), 'all approved full source pins required')
   fs.mkdirSync(out, {recursive: true})
@@ -163,7 +165,7 @@ function collect({variant, project, out, temporary, actionSha, sourceSha, harnes
     assert.equal(names.length, 1, 'exactly one full matrix bridge invocation required')
     const summary = readRegular(path.join(directory, names[0])), event = summary.data
     assert.equal(event.schema, 'quod-managed-matrix-action-result-v1')
-    assert.equal(event.mode, variant === 'managed' ? 'matrix-research' : 'matrix-control')
+    assert.equal(event.mode, variant === 'managed' ? profile.managedMode : profile.controlMode)
     assert.equal(event.fullJobHit, false)
     assert.equal(event.selectedScope.kind, 'complete-original-default-selection')
     assert.equal(event.cacheTransport.scopeInput.source.commit, sourceSha, 'different runtime source')
@@ -177,7 +179,17 @@ function collect({variant, project, out, temporary, actionSha, sourceSha, harnes
     assert.equal(fingerprint.strongLogicalSha256, event.logicalSha256)
     assert.equal(event.authLifecycle.sessionConsumedBeforeVitestDispatch, true)
     assert.equal(event.authLifecycle.authAbsentOutsideSdk, true)
+    let profileEvidence = {}
+    if (profile.property47) {
+      assert(path.dirname(event.evidenceDirectory) === path.join(temporary, 'quod') &&
+        /^matrix-run-[A-Za-z0-9]+$/.test(path.basename(event.evidenceDirectory)), 'owned invocation evidence directory required')
+      const dispatched = readRegular(path.join(event.evidenceDirectory, 'result.json'))
+      const candidateProfile = property47Evidence({event, dispatch: dispatched.data, logical: logical.data})
+      fs.writeFileSync(path.join(out, 'dispatch-result.json'), dispatched.bytes, {flag: 'wx'})
+      profileEvidence = {candidateProfile, dispatchRaw: {file: 'dispatch-result.json', sha256: dispatched.sha256, bytes: dispatched.bytes.length}}
+    }
     result = {...fingerprint, bridgeSummarySha256: sha(Buffer.from(JSON.stringify(event))),
+      ...profileEvidence,
       transport: transportEvidence({event, temporary, out, namespace, variant}),
       raw: {file: 'logical-results.json', sha256: logical.sha256, bytes: logical.bytes.length},
       summaryRaw: {file: 'bridge-summary.json', sha256: summary.sha256, bytes: summary.bytes.length}}
@@ -198,7 +210,7 @@ if (require.main === module) {
     else if (mode === 'collect') collect({variant: args[0], project: fs.realpathSync(args[1]), out: path.resolve(args[2]),
       temporary: fs.realpathSync(process.env.RUNNER_TEMP), actionSha: process.env.MATRIX_ACTION_SHA,
       sourceSha: process.env.MATRIX_RUNTIME_SOURCE, harnessSha: process.env.GITHUB_SHA, commit: process.env.PROJECT_COMMIT,
-      namespace: process.env.MATRIX_CACHE_NAMESPACE})
+      namespace: process.env.MATRIX_CACHE_NAMESPACE, candidateProfile: process.env.MATRIX_CANDIDATE_PROFILE})
     else throw Error('usage: matrix-evidence.cjs collect VARIANT PROJECT OUT | log FILE')
   } catch (error) {console.error(error.stack || error); process.exitCode = 1}
 }

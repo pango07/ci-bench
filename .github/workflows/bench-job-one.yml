@@ -1,4 +1,4 @@
-# New isolated research branch; historical workflow is retained at73c786a.
+# Isolated property47 experiment from K287e63; original108 workflow remains frozen in Git history.
 name: bench-job-one
 run-name: bench-job-one ${{ inputs.tag }}
 on:
@@ -14,8 +14,9 @@ on:
 permissions:
   contents: read
 env:
-  MATRIX_ACTION_SHA: '97caed0c9b9e998b5b1765c8fde21b4336d368f2'
-  MATRIX_RUNTIME_SOURCE: '85c96d6c62c9252f3aa464a851f514348353d010' # MATRIX_SOURCE_SHA
+  MATRIX_ACTION_SHA: '0520117d99379472cd33dbb777f852d8a189a20a' # Reviewed packaged property47 Action
+  MATRIX_RUNTIME_SOURCE: 'f67fe14033de76f0b26b436cef4e5d50b0af1ee3' # MATRIX_SOURCE_SHA
+  MATRIX_CANDIDATE_PROFILE: 'reviewed-original-property47-single-instance-v1-research'
 jobs:
   native:
     name: job
@@ -34,7 +35,7 @@ jobs:
         if: inputs.variant != 'floor'
         run: |
           mkdir -p "$RUNNER_TEMP/matrix-harness"
-          cp scripts/job/matrix-evidence.cjs scripts/job/evidence.cjs "$RUNNER_TEMP/matrix-harness/"
+          cp scripts/job/matrix-evidence.cjs scripts/job/evidence.cjs scripts/job/property47-window-profile.cjs "$RUNNER_TEMP/matrix-harness/"
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -109,7 +110,7 @@ jobs:
       - name: copy helper outside project selection
         run: |
           mkdir -p "$RUNNER_TEMP/matrix-harness"
-          cp scripts/job/matrix-evidence.cjs scripts/job/evidence.cjs "$RUNNER_TEMP/matrix-harness/"
+          cp scripts/job/matrix-evidence.cjs scripts/job/evidence.cjs scripts/job/property47-window-profile.cjs "$RUNNER_TEMP/matrix-harness/"
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -122,9 +123,9 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: quod
-        uses: pango07/quod-action@97caed0c9b9e998b5b1765c8fde21b4336d368f2 # MATRIX_ACTION_SHA
+        uses: pango07/quod-action@0520117d99379472cd33dbb777f852d8a189a20a # MATRIX_ACTION_SHA; reviewed packaged property47 Action
         with:
-          managed-vitest: ${{ inputs.variant == 'managed-control' && 'matrix-control' || 'matrix-research' }}
+          managed-vitest: ${{ inputs.variant == 'managed-control' && 'matrix-property47-control' || 'matrix-property47' }}
           managed-env: '{"NODE_ENV":"test"}'
           managed-epoch: '1700000000000'
           managed-seed: '42'
