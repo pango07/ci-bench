@@ -1,61 +1,29 @@
-# Whole jobs, measured as GitHub bills them (pango07/quod
-# docs/whole-job-replay.md, section 6): per (project, commit, variant) one
-# real job (bench-job-one.yml: checkout, set-up, [the action line], install,
-# build, test), commits in order per project and variant so each job
-# restores what the previous one saved. Timings from the jobs API
-# (scripts/job/report.mjs): queue, runner-seconds, and per step group, so
-# the fixed overhead of a job (everything but install, build and test) is
-# measured, not assumed.
-#
-#   gh workflow run bench-job.yml -R pango07/ci-bench --ref bench/whole-job
-#   gh workflow run bench-job.yml -R pango07/ci-bench --ref bench/whole-job -f only=zustand -f commits=3
 name: bench-job
-
 on:
   workflow_dispatch:
     inputs:
-      only:
-        description: Comma-separated corpus ids
-        required: false
-        default: convex-helpers
-      commits:
-        description: Consecutive first-parent commits per project, ending at the corpus sha
-        required: false
-        default: '12'
-      end:
-        description: The window's last commit (default the corpus sha)
-        required: false
-        default: ''
-      variants:
-        description: Comma-separated variants (floor, plain, managed-control, managed, or historical quod variants)
-        required: false
-        default: floor,plain,managed-control,managed
-      warm_first:
-        description: Diagnostic only; repeat the first commit once to confirm its initial records
-        required: false
-        default: 'false'
-      cloud:
-        description: Enable Cloud ledger storage and dashboard reports (adds network work to measured jobs)
-        type: boolean
-        required: false
-        default: false
-  # Registers the workflow while it lives only on this branch; the job runs on dispatch only.
-  push:
-    branches: ['bench/whole-job']
-    paths: ['.github/workflows/bench-job.yml']
-
+      only: {default: convex-helpers, description: Must remain convex-helpers}
+      commits: {default: '12', description: Must remain the full original12}
+      variants: {default: 'floor,plain,managed-control,managed', description: Exact original48 scope}
+      end: {default: '', description: Default original c11; changed windows decline}
+      warm_first: {default: 'false', description: Must remain false}
+      cloud: {type: boolean, default: false, description: Must remain false}
 permissions:
-  contents: write   # the per-chain branches (created, then deleted)
-  actions: write    # dispatching bench-job-one.yml
-
+  contents: write
+  actions: write
 jobs:
   drive:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: drive
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24.18.0'
+      - name: exact cold matrix window driver and fixture prerequisites
         env:
           GH_TOKEN: ${{ github.token }}
           ONLY: ${{ inputs.only }}
@@ -64,16 +32,10 @@ jobs:
           BJ_END: ${{ inputs.end }}
           BJ_REPEAT_FIRST: ${{ inputs.warm_first }}
           BJ_CLOUD: ${{ inputs.cloud && 'true' || 'false' }}
-        run: bash scripts/job/drive.sh "$ONLY" "$COMMITS" "$VARIANTS"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        run: bash scripts/job/matrix-drive.sh "$ONLY" "$COMMITS" "$VARIANTS"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
           name: bench-job
-          path: |
-            ${{ runner.temp }}/bj/expected.jsonl
-            ${{ runner.temp }}/bj/settings.json
-            ${{ runner.temp }}/bj/managed-window.json
-            ${{ runner.temp }}/bj/jobs.jsonl
-            ${{ runner.temp }}/bj/job-metrics.json
-            ${{ runner.temp }}/bj/report.md
+          path: ${{ runner.temp }}/bj/
           if-no-files-found: ignore

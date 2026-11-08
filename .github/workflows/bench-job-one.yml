@@ -1,113 +1,72 @@
-# One real CI job of one corpus project at one commit, as its CI has it:
-# checkout, the package-manager / node set-up, (variant quod-shipped: the
-# action line), install, build, test. bench-job.yml dispatches it once per
-# (project, commit, variant) and reads its timings from the jobs API
-# (docs/whole-job-replay.md section 6 in pango07/quod). Nothing here times
-# itself: every step is its own step so the jobs API has its duration.
-# Experimental variants use the Actions cache by default. `cloud: true`
-# also enables Cloud ledger storage and dashboard reports; its network work
-# belongs to that job's measured cost and must be labelled separately.
-#
-# Not meant to be dispatched by hand; bench-job.yml passes `cfg` (the corpus
-# entry's set-up flags and commands, JSON).
+# New isolated research branch; historical workflow is retained at73c786a.
 name: bench-job-one
 run-name: bench-job-one ${{ inputs.tag }}
-
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: Unique name for this run (the driver finds the run by it)
-        required: true
-      repo:
-        description: owner/name of the project
-        required: true
-      commit:
-        description: The project commit
-        required: true
-      variant:
-        description: plain | floor | quod-shipped | quod | quod-ts | quod-ts<N>
-        required: true
-      cloud:
-        description: Enable Quod Cloud ledger storage and dashboard reports for experimental Quod variants
-        type: boolean
-        required: false
-        default: false
-      cache_namespace:
-        description: Unique cold cache namespace for one managed/control window chain
-        required: false
-        default: ''
-      cfg:
-        description: 'JSON: {pnpm, bun, corepack, corepack_first, node, node_file, bun_file, install, build, test, env}'
-        required: true
-  # Registers the workflow while it lives only on this branch; the job runs on dispatch only.
-  push:
-    branches: ['bench/whole-job']
-    paths: ['.github/workflows/bench-job-one.yml']
-
+      tag: {required: true, description: Unique original-window invocation tag}
+      repo: {required: true, description: Original public project}
+      commit: {required: true, description: Exact original project SHA}
+      variant: {required: true, description: floor/plain/managed-control/managed}
+      cfg: {required: true, description: Original corpus commands as JSON}
+      cache_namespace: {required: false, default: '', description: Independent cold namespace}
+      cloud: {type: boolean, required: false, default: false, description: Must remain false}
 permissions:
   contents: read
-  id-token: write
-
-# Job-level conditions keep unused Quod actions out of plain/floor preparation.
-# Exactly one job runs; the driver rejects zero or multiple measured jobs.
+env:
+  MATRIX_ACTION_SHA: '97caed0c9b9e998b5b1765c8fde21b4336d368f2'
+  MATRIX_RUNTIME_SOURCE: '85c96d6c62c9252f3aa464a851f514348353d010' # MATRIX_SOURCE_SHA
 jobs:
-  job:
+  native:
     name: job
-    if: github.event_name == 'workflow_dispatch' && (inputs.variant == 'plain' || inputs.variant == 'floor')
+    if: github.event_name == 'workflow_dispatch' && (inputs.variant == 'floor' || inputs.variant == 'plain')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      - name: retain reviewed harness helper source
+        if: inputs.variant != 'floor'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: scripts/job
+          persist-credentials: false
+      - name: copy helper outside project selection
+        if: inputs.variant != 'floor'
+        run: |
+          mkdir -p "$RUNNER_TEMP/matrix-harness"
+          cp scripts/job/matrix-evidence.cjs scripts/job/evidence.cjs "$RUNNER_TEMP/matrix-harness/"
       - name: checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ inputs.repo }}
           ref: ${{ inputs.commit }}
           persist-credentials: false
-      - name: corepack enable (before setup-node)
-        if: fromJSON(inputs.cfg).corepack_first
-        run: corepack enable
-      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
-        if: fromJSON(inputs.cfg).pnpm
-      - uses: oven-sh/setup-bun@v2
-        if: fromJSON(inputs.cfg).bun
+      - name: verify original Node declaration
+        run: test "$(tr -d '\r\n' < .nvmrc)" = 24.18.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          bun-version-file: ${{ fromJSON(inputs.cfg).bun_file }}
-      - uses: actions/setup-node@v6
-        if: fromJSON(inputs.cfg).node != '' || fromJSON(inputs.cfg).node_file != ''
-        with:
-          node-version: ${{ fromJSON(inputs.cfg).node }}
-          node-version-file: ${{ fromJSON(inputs.cfg).node_file }}
-      - name: corepack enable
-        if: fromJSON(inputs.cfg).corepack
-        run: corepack enable
-
-      - name: capture per-test evidence
-        if: inputs.variant != 'floor'
+          node-version-file: .nvmrc
+      - name: capture ordinary full native JSON
+        if: inputs.variant == 'plain'
         run: |
           cat > "$RUNNER_TEMP/bench-vitest-report.cjs" <<'JS'
           const entry = process.argv[1] || ''
-          if (/(?:^|[\/])vitest(?:\.m?js)?$/.test(entry) && process.argv.includes('run')) {
+          const hasOutput = process.argv.some(arg => /^--outputFile(?:\.json)?(?:=|$)/.test(arg))
+          if (/(?:^|[\/])vitest(?:\.m?js)?$/.test(entry) && process.argv.includes('run') && !hasOutput)
             process.argv.push('--reporter=default', '--reporter=json', '--outputFile.json=' + process.env.BENCH_VITEST_REPORT)
-          }
           JS
           echo "BENCH_VITEST_REPORT=$RUNNER_TEMP/bench-vitest-report.json" >> "$GITHUB_ENV"
-
-      # ---- the one line a customer adds: the action as shipped on exp/supported-v1, at its defaults
-      # (dependencies, task-cache and cloud on), with the quod the 14-repo bench ran ----
       - name: env
         env:
           E: ${{ fromJSON(inputs.cfg).env }}
         run: for kv in $E; do echo "$kv" >> "$GITHUB_ENV"; done
-      # variant floor: the job with no work at all (checkout and set-up only),
-      # the floor a hit is reported against.
       - name: install
         if: inputs.variant != 'floor'
         env:
           CMD: ${{ fromJSON(inputs.cfg).install }}
         run: bash -c "$CMD"
       - name: build
-        if: fromJSON(inputs.cfg).build != '' && inputs.variant != 'floor'
+        if: inputs.variant != 'floor'
         env:
           CMD: ${{ fromJSON(inputs.cfg).build }}
         run: bash -c "$CMD"
@@ -115,367 +74,94 @@ jobs:
         if: inputs.variant != 'floor'
         env:
           CMD: ${{ fromJSON(inputs.cfg).test }}
-          WD: ${{ fromJSON(inputs.cfg).workdir || '.' }}
+          WD: ${{ fromJSON(inputs.cfg).workdir }}
           NODE_OPTIONS: --require=${{ runner.temp }}/bench-vitest-report.cjs
         run: cd "$WD" && bash -c "$CMD"
-      - name: compare evidence
-        if: always() && inputs.variant != 'floor'
-        run: |
-          cat > "$RUNNER_TEMP/bench-evidence.cjs" <<'JS'
-          'use strict'
-          const fs = require('node:fs')
-          const crypto = require('node:crypto')
-          const path = require('node:path')
-          function states(report, root) {
-            if (!Array.isArray(report.testResults) || !report.testResults.length) throw Error('missing Vitest test results')
-            const rows = report.testResults.map(file => {
-              if (typeof file.name !== 'string' || !Array.isArray(file.assertionResults)) throw Error('incomplete Vitest file evidence')
-              const tests = file.assertionResults.map(a => {
-                if (typeof a.fullName !== 'string' || typeof a.status !== 'string') throw Error('incomplete test evidence')
-                return [a.fullName, a.status]
-              }).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
-              return [path.relative(root, file.name), file.status, tests]
-            }).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
-            return { hash: crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex'), files: rows.length, tests: rows.reduce((n,r)=>n+r[2].length,0) }
-          }
-          if (require.main === module) {
-            const result = states(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')), process.argv[3])
-            console.log(`QUOD_BENCH_STATES ${result.hash} ${result.files} ${result.tests}`)
-          }
-          module.exports = { states }
-          JS
-          node "$RUNNER_TEMP/bench-evidence.cjs" "$BENCH_VITEST_REPORT" "$GITHUB_WORKSPACE"
-
-  quod:
-    name: job
-    if: github.event_name == 'workflow_dispatch' && (startsWith(inputs.variant, 'quod') && inputs.variant != 'quod-shipped')
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: compare complete ordinary evidence
+        if: always() && inputs.variant == 'plain'
+        env:
+          PROJECT_COMMIT: ${{ inputs.commit }}
+        run: node "$RUNNER_TEMP/matrix-harness/matrix-evidence.cjs" collect plain "$GITHUB_WORKSPACE" "$RUNNER_TEMP/matrix-bench-evidence"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always() && inputs.variant == 'plain'
         with:
-          repository: ${{ inputs.repo }}
-          ref: ${{ inputs.commit }}
-          persist-credentials: false
-      - name: corepack enable (before setup-node)
-        if: fromJSON(inputs.cfg).corepack_first
-        run: corepack enable
-      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
-        if: fromJSON(inputs.cfg).pnpm
-      - uses: oven-sh/setup-bun@v2
-        if: fromJSON(inputs.cfg).bun
-        with:
-          bun-version-file: ${{ fromJSON(inputs.cfg).bun_file }}
-      - uses: actions/setup-node@v6
-        if: fromJSON(inputs.cfg).node != '' || fromJSON(inputs.cfg).node_file != ''
-        with:
-          node-version: ${{ fromJSON(inputs.cfg).node }}
-          node-version-file: ${{ fromJSON(inputs.cfg).node_file }}
-      - name: corepack enable
-        if: fromJSON(inputs.cfg).corepack
-        run: corepack enable
-
-      - name: capture per-test evidence
-        if: inputs.variant != 'floor'
-        run: |
-          cat > "$RUNNER_TEMP/bench-vitest-report.cjs" <<'JS'
-          const entry = process.argv[1] || ''
-          if (/(?:^|[\/])vitest(?:\.m?js)?$/.test(entry) && process.argv.includes('run')) {
-            process.argv.push('--reporter=default', '--reporter=json', '--outputFile.json=' + process.env.BENCH_VITEST_REPORT)
-          }
-          JS
-          echo "BENCH_VITEST_REPORT=$RUNNER_TEMP/bench-vitest-report.json" >> "$GITHUB_ENV"
-
-      # ---- the one line a customer adds: the action as shipped on exp/supported-v1, at its defaults
-      # (dependencies, task-cache and cloud on), with the quod the 14-repo bench ran ----
-      - name: quod policy
-        id: pol
-        env:
-          V: ${{ inputs.variant }}
-        run: a=${V#quod-ts}; [[ "$V" == quod-ts* && "$a" =~ ^[0-9]+$ ]] || a=0; echo "audit=$a" >> "$GITHUB_OUTPUT"
-      - name: quod
-        if: startsWith(inputs.variant, 'quod') && inputs.variant != 'quod-shipped'
-        uses: pango07/quod-action@7a84de3363d18226080f37a9eea9ebd103210c5d # same-job lineage recovery; remote gate 42368399833
-        with:
-          version: bin-024b929
-          sha256: 639eaa8cea088ef8ef1fb2ed7f6b775ccf537861f6de71ea60a98d62fbfc148d
-          cloud: ${{ inputs.cloud && 'true' || 'false' }}
-          task-cache: 'false'
-          lineage-witness: 'true'
-          timing-sensitive: ${{ startsWith(inputs.variant, 'quod-ts') && 'replay' || 'off' }}
-          timing-audit: ${{ steps.pol.outputs.audit }}
-
-      - name: env
-        env:
-          E: ${{ fromJSON(inputs.cfg).env }}
-        run: for kv in $E; do echo "$kv" >> "$GITHUB_ENV"; done
-      # variant floor: the job with no work at all (checkout and set-up only),
-      # the floor a hit is reported against.
-      - name: install
-        if: inputs.variant != 'floor'
-        env:
-          CMD: ${{ fromJSON(inputs.cfg).install }}
-        run: bash -c "$CMD"
-      - name: build
-        if: fromJSON(inputs.cfg).build != '' && inputs.variant != 'floor'
-        env:
-          CMD: ${{ fromJSON(inputs.cfg).build }}
-        run: bash -c "$CMD"
-      - name: test
-        if: inputs.variant != 'floor'
-        env:
-          CMD: ${{ fromJSON(inputs.cfg).test }}
-          WD: ${{ fromJSON(inputs.cfg).workdir || '.' }}
-          NODE_OPTIONS: --require=${{ runner.temp }}/bench-vitest-report.cjs
-        run: cd "$WD" && bash -c "$CMD"
-      - name: compare evidence
-        if: always() && inputs.variant != 'floor'
-        run: |
-          cat > "$RUNNER_TEMP/bench-evidence.cjs" <<'JS'
-          'use strict'
-          const fs = require('node:fs')
-          const crypto = require('node:crypto')
-          const path = require('node:path')
-          function states(report, root) {
-            if (!Array.isArray(report.testResults) || !report.testResults.length) throw Error('missing Vitest test results')
-            const rows = report.testResults.map(file => {
-              if (typeof file.name !== 'string' || !Array.isArray(file.assertionResults)) throw Error('incomplete Vitest file evidence')
-              const tests = file.assertionResults.map(a => {
-                if (typeof a.fullName !== 'string' || typeof a.status !== 'string') throw Error('incomplete test evidence')
-                return [a.fullName, a.status]
-              }).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
-              return [path.relative(root, file.name), file.status, tests]
-            }).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
-            return { hash: crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex'), files: rows.length, tests: rows.reduce((n,r)=>n+r[2].length,0) }
-          }
-          if (require.main === module) {
-            const result = states(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')), process.argv[3])
-            console.log(`QUOD_BENCH_STATES ${result.hash} ${result.files} ${result.tests}`)
-          }
-          module.exports = { states }
-          JS
-          node "$RUNNER_TEMP/bench-evidence.cjs" "$BENCH_VITEST_REPORT" "$GITHUB_WORKSPACE"
-
-  shipped:
-    name: job
-    if: github.event_name == 'workflow_dispatch' && (inputs.variant == 'quod-shipped')
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.repo }}
-          ref: ${{ inputs.commit }}
-          persist-credentials: false
-      - name: corepack enable (before setup-node)
-        if: fromJSON(inputs.cfg).corepack_first
-        run: corepack enable
-      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
-        if: fromJSON(inputs.cfg).pnpm
-      - uses: oven-sh/setup-bun@v2
-        if: fromJSON(inputs.cfg).bun
-        with:
-          bun-version-file: ${{ fromJSON(inputs.cfg).bun_file }}
-      - uses: actions/setup-node@v6
-        if: fromJSON(inputs.cfg).node != '' || fromJSON(inputs.cfg).node_file != ''
-        with:
-          node-version: ${{ fromJSON(inputs.cfg).node }}
-          node-version-file: ${{ fromJSON(inputs.cfg).node_file }}
-      - name: corepack enable
-        if: fromJSON(inputs.cfg).corepack
-        run: corepack enable
-
-      - name: capture per-test evidence
-        if: inputs.variant != 'floor'
-        run: |
-          cat > "$RUNNER_TEMP/bench-vitest-report.cjs" <<'JS'
-          const entry = process.argv[1] || ''
-          if (/(?:^|[\/])vitest(?:\.m?js)?$/.test(entry) && process.argv.includes('run')) {
-            process.argv.push('--reporter=default', '--reporter=json', '--outputFile.json=' + process.env.BENCH_VITEST_REPORT)
-          }
-          JS
-          echo "BENCH_VITEST_REPORT=$RUNNER_TEMP/bench-vitest-report.json" >> "$GITHUB_ENV"
-
-      # ---- the one line a customer adds: the action as shipped on exp/supported-v1, at its defaults
-      # (dependencies, task-cache and cloud on), with the quod the 14-repo bench ran ----
-      - name: quod
-        if: inputs.variant == 'quod-shipped'
-        uses: pango07/quod-action@76297ed9712e1e76381211b6d6f92c7b699e3aab # exp/supported-v1
-        with:
-          version: bin-32b630c
-          sha256: e8b13b01329218d941177d61f381eb7341f152cdf65931b5ff06f121a06a3c3d
-
-      # ---- the line under development: quod-action exp/whole-job ----
-      # (cloud is opt-in; node_modules still uses the Actions cache).
-      # Variants: quod (the
-      # defaults: near-timeout margin 0.5), quod-ts (timing-sensitive: replay),
-      # quod-ts<N> (timing-sensitive: replay, timing-audit: N).
-      - name: env
-        env:
-          E: ${{ fromJSON(inputs.cfg).env }}
-        run: for kv in $E; do echo "$kv" >> "$GITHUB_ENV"; done
-      # variant floor: the job with no work at all (checkout and set-up only),
-      # the floor a hit is reported against.
-      - name: install
-        if: inputs.variant != 'floor'
-        env:
-          CMD: ${{ fromJSON(inputs.cfg).install }}
-        run: bash -c "$CMD"
-      - name: build
-        if: fromJSON(inputs.cfg).build != '' && inputs.variant != 'floor'
-        env:
-          CMD: ${{ fromJSON(inputs.cfg).build }}
-        run: bash -c "$CMD"
-      - name: test
-        if: inputs.variant != 'floor'
-        env:
-          CMD: ${{ fromJSON(inputs.cfg).test }}
-          WD: ${{ fromJSON(inputs.cfg).workdir || '.' }}
-          NODE_OPTIONS: --require=${{ runner.temp }}/bench-vitest-report.cjs
-        run: cd "$WD" && bash -c "$CMD"
-      - name: compare evidence
-        if: always() && inputs.variant != 'floor'
-        run: |
-          cat > "$RUNNER_TEMP/bench-evidence.cjs" <<'JS'
-          'use strict'
-          const fs = require('node:fs')
-          const crypto = require('node:crypto')
-          const path = require('node:path')
-          function states(report, root) {
-            if (!Array.isArray(report.testResults) || !report.testResults.length) throw Error('missing Vitest test results')
-            const rows = report.testResults.map(file => {
-              if (typeof file.name !== 'string' || !Array.isArray(file.assertionResults)) throw Error('incomplete Vitest file evidence')
-              const tests = file.assertionResults.map(a => {
-                if (typeof a.fullName !== 'string' || typeof a.status !== 'string') throw Error('incomplete test evidence')
-                return [a.fullName, a.status]
-              }).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
-              return [path.relative(root, file.name), file.status, tests]
-            }).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
-            return { hash: crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex'), files: rows.length, tests: rows.reduce((n,r)=>n+r[2].length,0) }
-          }
-          if (require.main === module) {
-            const result = states(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')), process.argv[3])
-            console.log(`QUOD_BENCH_STATES ${result.hash} ${result.files} ${result.tests}`)
-          }
-          module.exports = { states }
-          JS
-          node "$RUNNER_TEMP/bench-evidence.cjs" "$BENCH_VITEST_REPORT" "$GITHUB_WORKSPACE"
-
-  managed:
+          name: matrix-evidence-${{ inputs.tag }}
+          path: ${{ runner.temp }}/matrix-bench-evidence/
+          if-no-files-found: error
+  matrix:
     name: job
     if: github.event_name == 'workflow_dispatch' && (inputs.variant == 'managed' || inputs.variant == 'managed-control')
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      NODE_OPTIONS: ''
+      NODE_PATH: ''
+      NODE_PRESERVE_SYMLINKS: ''
+      NODE_COMPILE_CACHE: ''
+      ESBUILD_BINARY_PATH: ''
     steps:
+      - name: retain reviewed harness helper source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: scripts/job
+          persist-credentials: false
+      - name: copy helper outside project selection
+        run: |
+          mkdir -p "$RUNNER_TEMP/matrix-harness"
+          cp scripts/job/matrix-evidence.cjs scripts/job/evidence.cjs "$RUNNER_TEMP/matrix-harness/"
       - name: checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ inputs.repo }}
           ref: ${{ inputs.commit }}
           persist-credentials: false
-      - name: corepack enable (before setup-node)
-        if: fromJSON(inputs.cfg).corepack_first
-        run: corepack enable
-      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
-        if: fromJSON(inputs.cfg).pnpm
-      - uses: oven-sh/setup-bun@v2
-        if: fromJSON(inputs.cfg).bun
-        with:
-          bun-version-file: ${{ fromJSON(inputs.cfg).bun_file }}
+      - name: verify original Node declaration
+        run: test "$(tr -d '\r\n' < .nvmrc)" = 24.18.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        if: fromJSON(inputs.cfg).node != '' || fromJSON(inputs.cfg).node_file != ''
         with:
-          node-version: ${{ fromJSON(inputs.cfg).node }}
-          node-version-file: ${{ fromJSON(inputs.cfg).node_file }}
-      - name: corepack enable
-        if: fromJSON(inputs.cfg).corepack
-        run: corepack enable
-
-      - name: capture per-test evidence
-        if: inputs.variant != 'floor'
-        run: |
-          cat > "$RUNNER_TEMP/bench-vitest-report.cjs" <<'JS'
-          const entry = process.argv[1] || ''
-          const hasOutputFile = process.argv.some(arg => /^--outputFile(?:\.json)?(?:=|$)/.test(arg))
-          if (/(?:^|[\/])vitest(?:\.m?js)?$/.test(entry) && process.argv.includes('run') && !hasOutputFile) {
-            process.argv.push('--reporter=default', '--reporter=json', '--outputFile.json=' + process.env.BENCH_VITEST_REPORT)
-          }
-          JS
-          echo "BENCH_VITEST_REPORT=$RUNNER_TEMP/bench-vitest-report.json" >> "$GITHUB_ENV"
-
+          node-version-file: .nvmrc
       - name: quod
-        id: quod-managed
-        uses: pango07/quod-action@c77d86564686c439aa8e5b9d42a1f8573da771b8 # MANAGED_ACTION_SHA: GitHub-built runtime and cache authority capture
+        uses: pango07/quod-action@97caed0c9b9e998b5b1765c8fde21b4336d368f2 # MATRIX_ACTION_SHA
         with:
-          managed-vitest: ${{ inputs.variant == 'managed-control' && 'control' || 'v0' }}
+          managed-vitest: ${{ inputs.variant == 'managed-control' && 'matrix-control' || 'matrix-research' }}
           managed-env: '{"NODE_ENV":"test"}'
-          managed-seed: '42'
           managed-epoch: '1700000000000'
+          managed-seed: '42'
           cache-namespace: ${{ inputs.cache_namespace }}
           cloud: 'false'
           task-cache: 'false'
-
       - name: env
         env:
           E: ${{ fromJSON(inputs.cfg).env }}
         run: for kv in $E; do echo "$kv" >> "$GITHUB_ENV"; done
-      # variant floor: the job with no work at all (checkout and set-up only),
-      # the floor a hit is reported against.
       - name: install
-        if: inputs.variant != 'floor'
         env:
           CMD: ${{ fromJSON(inputs.cfg).install }}
         run: bash -c "$CMD"
       - name: build
-        if: fromJSON(inputs.cfg).build != '' && inputs.variant != 'floor'
         env:
           CMD: ${{ fromJSON(inputs.cfg).build }}
         run: bash -c "$CMD"
       - name: test
-        if: inputs.variant != 'floor'
         env:
           CMD: ${{ fromJSON(inputs.cfg).test }}
-          WD: ${{ fromJSON(inputs.cfg).workdir || '.' }}
-          NODE_OPTIONS: --require=${{ runner.temp }}/bench-vitest-report.cjs
+          WD: ${{ fromJSON(inputs.cfg).workdir }}
+          NODE_OPTIONS: ''
         run: cd "$WD" && bash -c "$CMD"
-      - name: compare evidence
-        if: always() && inputs.variant != 'floor'
-        run: |
-          cat > "$RUNNER_TEMP/bench-evidence.cjs" <<'JS'
-          'use strict'
-          const fs = require('node:fs')
-          const crypto = require('node:crypto')
-          const path = require('node:path')
-          function states(report, root) {
-            if (!Array.isArray(report.testResults) || !report.testResults.length) throw Error('missing Vitest test results')
-            const rows = report.testResults.map(file => {
-              if (typeof file.name !== 'string' || !Array.isArray(file.assertionResults)) throw Error('incomplete Vitest file evidence')
-              const tests = file.assertionResults.map(a => {
-                if (typeof a.fullName !== 'string' || typeof a.status !== 'string') throw Error('incomplete test evidence')
-                return [a.fullName, a.status]
-              }).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
-              return [path.relative(root, file.name), file.status, tests]
-            }).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
-            return { hash: crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex'), files: rows.length, tests: rows.reduce((n,r)=>n+r[2].length,0) }
-          }
-          if (require.main === module) {
-            const result = states(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')), process.argv[3])
-            console.log(`QUOD_BENCH_STATES ${result.hash} ${result.files} ${result.tests}`)
-          }
-          module.exports = { states }
-          JS
-          node "$RUNNER_TEMP/bench-evidence.cjs" "$BENCH_VITEST_REPORT" "$GITHUB_WORKSPACE"
-
-      - name: retain managed execution and merged full-suite evidence
+      - name: compare complete logical evidence before post
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        env:
+          PROJECT_COMMIT: ${{ inputs.commit }}
+          VARIANT: ${{ inputs.variant }}
+          MATRIX_CACHE_NAMESPACE: ${{ inputs.cache_namespace }}
+        run: node "$RUNNER_TEMP/matrix-harness/matrix-evidence.cjs" collect "$VARIANT" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/matrix-bench-evidence"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
         with:
-          name: managed-evidence-${{ inputs.tag }}
+          name: matrix-evidence-${{ inputs.tag }}
           path: |
-            ${{ runner.temp }}/bench-vitest-report.json
-            ${{ runner.temp }}/quod/managed-run-*
-            ${{ runner.temp }}/quod/managed-receipts
-            ${{ runner.temp }}/quod/reports
+            ${{ runner.temp }}/matrix-bench-evidence/
+            ${{ runner.temp }}/quod/matrix-run-*/
+            ${{ runner.temp }}/quod/matrix-reports/
           if-no-files-found: error
